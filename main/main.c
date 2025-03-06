@@ -45,6 +45,7 @@ void calculateDSTDays(int year, int *startDay, int *endDay);
 bool isDaylightSavingTime(int year, int daysPassed);
 void LogCurrentTime();
 static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
+static void get_device_service_name(char *service_name, size_t max);
 void Setup60KHzOutput();
 
 // WWVB related
@@ -128,22 +129,40 @@ void app_main(void)
 
     ESP_LOGI("WiFI", "Is provisioned: %s", is_provisioned ? "true" : "false");
 
-    // ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA) );
-    // ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config) );
+    /* If device is not yet provisioned start provisioning service */
+    if (!is_provisioned) 
+    {
+        ESP_LOGI("WiFi", "Starting provisioning");
 
-    // ESP_ERROR_CHECK(esp_wifi_start());
+        char service_name[12];
+        get_device_service_name(service_name, sizeof(service_name));
 
-    ESP_LOGI("WiFi", "Already provisioned, starting Wi-Fi STA");
+        uint8_t custom_service_uuid[] = {
+            /* LSB <---------------------------------------
+             * ---------------------------------------> MSB */
+            0xb4, 0xdf, 0x5a, 0x1c, 0x3f, 0x6b, 0xf4, 0xbf,
+            0xea, 0x4a, 0x82, 0x03, 0x04, 0x90, 0x1a, 0x02,
+        };
 
-    /* We don't need the manager as device is already provisioned, so let's release it's resources */
-    wifi_prov_mgr_deinit();
+        wifi_prov_scheme_ble_set_service_uuid(custom_service_uuid);
 
-    /* Start Wi-Fi station */
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_start());
-    
-    ESP_LOGI("WiFi", "Connected");
-    
+        /* Start provisioning service */
+        ESP_ERROR_CHECK(wifi_prov_mgr_start_provisioning(WIFI_PROV_SECURITY_0, NULL, service_name, NULL));
+    }
+    else
+    {
+        ESP_LOGI("WiFi", "Already provisioned, starting Wi-Fi STA");
+
+        /* We don't need the manager as device is already provisioned, so let's release it's resources */
+        wifi_prov_mgr_deinit();
+
+        /* Start Wi-Fi station */
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+        ESP_ERROR_CHECK(esp_wifi_start());
+        
+        ESP_LOGI("WiFi", "Connected");
+    }
+
     ESP_LOGI("SNTP", "Initializing SNTP");
 
     
@@ -569,22 +588,71 @@ void time_sync_notification_cb(struct timeval *tv)
 
 static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
 {
-    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) 
+    {
         esp_wifi_connect();
-    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        if (s_retry_num < 10) {
+    } 
+    else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) 
+    {
+        if (s_retry_num < 10) 
+        {
             esp_wifi_connect();
             s_retry_num++;
             ESP_LOGI("WiFi", "retry to connect to the AP");
-        } else {
+        } 
+        else 
+        {
             xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
         }
         ESP_LOGI("WiFi","connect to the AP fail");
-    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+    } 
+    else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) 
+    {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
         ESP_LOGI("WiFi", "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
         s_retry_num = 0;
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+    } 
+    else if (event_base == WIFI_PROV_EVENT) 
+    {
+        switch (event_id) 
+        {
+            case WIFI_PROV_START:
+                ESP_LOGI("WiFi", "Provisioning started");
+                break;
+            case WIFI_PROV_CRED_RECV: 
+            {
+                wifi_sta_config_t *wifi_sta_cfg = (wifi_sta_config_t *)event_data;
+                ESP_LOGI("WiFi", "Received Wi-Fi credentials"
+                         "\n\tSSID     : %s\n\tPassword : %s",
+                         (const char *) wifi_sta_cfg->ssid,
+                         (const char *) wifi_sta_cfg->password);
+                break;
+            }
+            case WIFI_PROV_CRED_FAIL: 
+            {
+                wifi_prov_sta_fail_reason_t *reason = (wifi_prov_sta_fail_reason_t *)event_data;
+                ESP_LOGE("WiFi", "Provisioning failed!\n\tReason : %s" "\n\tPlease reset to factory and retry provisioning",  (*reason == WIFI_PROV_STA_AUTH_ERROR) ?  "Wi-Fi station authentication failed" : "Wi-Fi access-point not found");
+                break;
+            }
+            case WIFI_PROV_CRED_SUCCESS:
+                ESP_LOGI("WiFi", "Provisioning successful");
+                break;
+            case WIFI_PROV_END:
+                /* De-initialize manager once provisioning is finished */
+                wifi_prov_mgr_deinit();
+                break;
+            default:
+                break;
+        }
     }
 }
 
+static void get_device_service_name(char *service_name, size_t max)
+{
+    uint8_t eth_mac[6];
+    const char *ssid_prefix = "PROV_";
+    esp_wifi_get_mac(WIFI_IF_STA, eth_mac);
+    snprintf(service_name, max, "%s%02X%02X%02X",
+             ssid_prefix, eth_mac[3], eth_mac[4], eth_mac[5]);
+}
