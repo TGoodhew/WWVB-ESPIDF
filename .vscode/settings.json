@@ -7,5 +7,6 @@
         "target/esp32.cfg"
     ],
     "idf.portWin": "COM3",
-    "idf.toolsPathWin": "C:\\Users\\Tony\\.espressif"
+    "idf.toolsPathWin": "C:\\Users\\Tony\\.espressif",
+    "idf.flashType": "UART"
 }
