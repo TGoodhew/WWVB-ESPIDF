@@ -8,5 +8,8 @@
     ],
     "idf.portWin": "COM3",
     "idf.toolsPathWin": "C:\\Users\\Tony\\.espressif",
-    "idf.flashType": "UART"
+    "idf.flashType": "UART",
+    "files.associations": {
+        "esp_chip_info.h": "c"
+    }
 }

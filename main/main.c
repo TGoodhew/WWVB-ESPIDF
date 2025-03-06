@@ -1,25 +1,37 @@
+/*
+  WWVB Emulator for Adafruit Huzzah32 Featherboard (ESP32)
+
+  There has been construction up the hill from me and this has caused the WWVB signal to be degraded all across my house except for one rear corner.
+  Every daylight savings change I need to cycle my atomic clocks through this corner to get them updated. The goal of this emulator is to grab the current
+  time via NTP and then create a local signal that my clocks can sync to.
+
+  Change log:
+
+    0.1   Deploy default ESP32 app using ESP-IDF only
+    0.2   Create a first version using the code generation from https://www.instructables.com/WWVB-radio-time-signal-generator-for-ATTINY45-or-A/
+    0.3   Use ESP32 timers to enable tweaking of the modulation to match the proper signal timing
+    0.4   Added encoding to create the bit patterns for Years, Days, Hours & Minutes from the system time converted to UTC
+    0.5   Added BLE WiFi provisioning using the ESP-IDF example code
+    0.6   Added SNTP call & synd to get UTC time
+    0.7   Added 60KHz output using the ESP32 LEDC PWM
+    0.8   Implemented ESP Logging
+*/
+
 #include <stdio.h>
 #include <inttypes.h>
 #include "sdkconfig.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "esp_chip_info.h"
-#include "esp_flash.h"
-#include "esp_system.h"
-#include "esp_timer.h"
-#include "esp_task_wdt.h"
-
-#include <time.h>
-#include <sys/time.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <esp_timer.h>
 #include <esp_sntp.h>
-#include "driver/gpio.h"
-#include "driver/ledc.h"
-#include "esp_log.h"
-#include "esp_wifi.h"
-#include "nvs_flash.h"
-#include "esp_netif.h"
-#include "esp_netif_sntp.h"
-#include "wifi_provisioning/manager.h"
+#include <driver/gpio.h>
+#include <driver/ledc.h>
+#include <esp_log.h>
+#include <esp_wifi.h>
+#include <nvs_flash.h>
+#include <esp_netif.h>
+#include <esp_netif_sntp.h>
+#include <wifi_provisioning/manager.h>
 #include <wifi_provisioning/scheme_ble.h>
 
 #define WWVBDEBUG
@@ -36,6 +48,7 @@ void setLeapSecond(bool IsLeap, uint8_t *signal);
 void setDST(bool IsDST, uint8_t *signal);
 uint16_t BitsEncoder(uint16_t n);
 void TimerSignalReenable_ISR();
+void ZeroCarrier();
 void TimerSecond_ISR();
 void BoardDebugTest();
 void SetupTimers();
@@ -149,8 +162,6 @@ void app_main(void)
          */
         wifi_prov_security1_params_t *sec_params = pop;
 
-        const char *username  = NULL;
-
         uint8_t custom_service_uuid[] = {
             /* LSB <---------------------------------------
              * ---------------------------------------> MSB */
@@ -158,7 +169,7 @@ void app_main(void)
             0xea, 0x4a, 0x82, 0x03, 0x04, 0x90, 0x1a, 0x02,
         };
 
-        wifi_prov_scheme_ble_set_service_uuid(custom_service_uuid);
+        ESP_ERROR_CHECK(wifi_prov_scheme_ble_set_service_uuid(custom_service_uuid));
 
         /* Start provisioning service */
         ESP_ERROR_CHECK(wifi_prov_mgr_start_provisioning(WIFI_PROV_SECURITY_1, (const void *) sec_params, service_name, NULL));
@@ -185,7 +196,7 @@ void app_main(void)
     sntp_config.sync_cb = SNTP_callback;
 
     //sntp_set_time_sync_notification_cb(SNTP_callback);
-    esp_netif_sntp_init(&sntp_config);
+    ESP_ERROR_CHECK(esp_netif_sntp_init(&sntp_config));
 
     if (esp_netif_sntp_sync_wait(pdMS_TO_TICKS(10000)) != ESP_OK) {
         ESP_LOGI("SNTP","Failed to update system time within 10s timeout");
@@ -274,46 +285,6 @@ void SetupTimers()
         .callback = &TimerSignalReenable_ISR,
         .name = "Bit Marker Timer"};
     ESP_ERROR_CHECK(esp_timer_create(&timer_bitmarker_config, &TimerBitMarker));
-}
-
-void BoardDebugTest()
-{
-    printf("Hello world!\n");
-
-    /* Print chip information */
-    esp_chip_info_t chip_info;
-    uint32_t flash_size;
-    esp_chip_info(&chip_info);
-    printf("This is %s chip with %d CPU core(s), %s%s%s%s, ",
-           CONFIG_IDF_TARGET,
-           chip_info.cores,
-           (chip_info.features & CHIP_FEATURE_WIFI_BGN) ? "WiFi/" : "",
-           (chip_info.features & CHIP_FEATURE_BT) ? "BT" : "",
-           (chip_info.features & CHIP_FEATURE_BLE) ? "BLE" : "",
-           (chip_info.features & CHIP_FEATURE_IEEE802154) ? ", 802.15.4 (Zigbee/Thread)" : "");
-
-    unsigned major_rev = chip_info.revision / 100;
-    unsigned minor_rev = chip_info.revision % 100;
-    printf("silicon revision v%d.%d, ", major_rev, minor_rev);
-    if (esp_flash_get_size(NULL, &flash_size) != ESP_OK)
-    {
-        printf("Get flash size failed");
-        return;
-    }
-
-    printf("%" PRIu32 "MB %s flash\n", flash_size / (uint32_t)(1024 * 1024),
-           (chip_info.features & CHIP_FEATURE_EMB_FLASH) ? "embedded" : "external");
-
-    printf("Minimum free heap size: %" PRIu32 " bytes\n", esp_get_minimum_free_heap_size());
-
-    for (int i = 10; i >= 0; i--)
-    {
-        printf("Restarting in %d seconds...\n", i);
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
-    }
-    printf("Restarting now.\n");
-    fflush(stdout);
-    esp_restart();
 }
 
 // This rotuine takes the input value and then breaks it out in the individual BCD pattern that the WWVB format expects
@@ -471,41 +442,6 @@ void setDST(bool IsDST, uint8_t *signal)
     }
 }
 
-// The following is AI generated code
-// This should be checked to see if it is actually works as expected
-// I just needed something quick to fill this DST calc
-
-// Function to determine if a year is a leap year
-bool isLeapYear(int year)
-{
-    if (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0))
-    {
-        return true;
-    }
-    return false;
-}
-
-// Function to calculate the start and end days for DST in a given year
-void calculateDSTDays(int year, int *startDay, int *endDay)
-{
-    bool leap = isLeapYear(year);
-    // Calculate the second Sunday in March
-    int daysInFeb = leap ? 29 : 28;
-    int daysUntilMarch = 31 + daysInFeb;
-    *startDay = daysUntilMarch + (14 - ((year + year / 4 - year / 100 + year / 400 + daysUntilMarch) % 7));
-
-    // Calculate the first Sunday in November
-    int daysUntilNov = 31 + daysInFeb + 31 + 30 + 31 + 30 + 31 + 31 + 30;
-    *endDay = daysUntilNov + (7 - ((year + year / 4 - year / 100 + year / 400 + daysUntilNov) % 7));
-}
-
-// Function to check if the current day is within DST period
-bool isDaylightSavingTime(int year, int daysPassed)
-{
-    int startDay, endDay;
-    calculateDSTDays(year, &startDay, &endDay);
-    return (daysPassed >= startDay && daysPassed < endDay);
-}
 
 void Setup60KHzOutput()
 {
@@ -516,7 +452,7 @@ void Setup60KHzOutput()
         .timer_num = LEDC_TIMER_0             // timer index
     };
     
-    ledc_timer_config(&ledc_timer);
+    ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
 
     ledc_channel.channel = LEDC_CHANNEL_0;
     ledc_channel.duty = 127;
@@ -524,15 +460,15 @@ void Setup60KHzOutput()
     ledc_channel.speed_mode = LEDC_HIGH_SPEED_MODE;
     ledc_channel.timer_sel = LEDC_TIMER_0;
 
-    ledc_channel_config(&ledc_channel);
+    ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
 }
 
 // All the bit/marker timers just reenable the 50%^ duty cycle of the 60KHz signal
 void IRAM_ATTR TimerSignalReenable_ISR()
 {
     //analogWrite(A0, 127);
-    ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, 127);
-    ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
+    ESP_ERROR_CHECK(ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, 127));
+    ESP_ERROR_CHECK(ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel));
 }
 
 void TimerSecond_ISR(void *param)
@@ -540,7 +476,7 @@ void TimerSecond_ISR(void *param)
   static bool ON;
   ON = !ON;
   
-  gpio_set_level(GPIO_NUM_13, ON);
+  ESP_ERROR_CHECK(gpio_set_level(GPIO_NUM_13, ON));
 
   switch (WWVBArray[slot])
   {
@@ -551,8 +487,7 @@ void TimerSecond_ISR(void *param)
       #endif
 
       // 0 (0.2s reduced power)
-      ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, 0);
-      ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
+      ZeroCarrier();
 
       // TimerBit0
       ESP_ERROR_CHECK(esp_timer_start_once(TimerBit0, 200000)); // 0.2 second
@@ -565,8 +500,7 @@ void TimerSecond_ISR(void *param)
       #endif
 
       // 1 (0.5s reduced power)
-      ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, 0);
-      ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
+      ZeroCarrier();
 
       // TimerBit1
       ESP_ERROR_CHECK(esp_timer_start_once(TimerBit1, 500000)); // 0.5 second
@@ -580,8 +514,7 @@ void TimerSecond_ISR(void *param)
       #endif
 
       // Marker (0.8s reduced power)
-      ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, 0);
-      ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
+      ZeroCarrier();
 
       // TimerBitMarker
       ESP_ERROR_CHECK(esp_timer_start_once(TimerBitMarker, 800000)); // 0.8 second
@@ -598,20 +531,25 @@ void TimerSecond_ISR(void *param)
       LogCurrentTime();
       #endif
   }
+}
 
+void ZeroCarrier()
+{
+    ESP_ERROR_CHECK(ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, 0));
+    ESP_ERROR_CHECK(ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel));
 }
 
 static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
 {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) 
     {
-        esp_wifi_connect();
+        ESP_ERROR_CHECK(esp_wifi_connect());
     } 
     else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) 
     {
         if (s_retry_num < 10) 
         {
-            esp_wifi_connect();
+            ESP_ERROR_CHECK(esp_wifi_connect());
             s_retry_num++;
             ESP_LOGI("WiFi", "retry to connect to the AP");
         } 
@@ -667,7 +605,43 @@ static void get_device_service_name(char *service_name, size_t max)
 {
     uint8_t eth_mac[6];
     const char *ssid_prefix = "PROV_";
-    esp_wifi_get_mac(WIFI_IF_STA, eth_mac);
+    ESP_ERROR_CHECK(esp_wifi_get_mac(WIFI_IF_STA, eth_mac));
     snprintf(service_name, max, "%s%02X%02X%02X",
              ssid_prefix, eth_mac[3], eth_mac[4], eth_mac[5]);
+}
+
+// The following is AI generated code
+// This should be checked to see if it is actually works as expected
+// I just needed something quick to fill this DST calc
+
+// Function to determine if a year is a leap year
+bool isLeapYear(int year)
+{
+    if (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0))
+    {
+        return true;
+    }
+    return false;
+}
+
+// Function to calculate the start and end days for DST in a given year
+void calculateDSTDays(int year, int *startDay, int *endDay)
+{
+    bool leap = isLeapYear(year);
+    // Calculate the second Sunday in March
+    int daysInFeb = leap ? 29 : 28;
+    int daysUntilMarch = 31 + daysInFeb;
+    *startDay = daysUntilMarch + (14 - ((year + year / 4 - year / 100 + year / 400 + daysUntilMarch) % 7));
+
+    // Calculate the first Sunday in November
+    int daysUntilNov = 31 + daysInFeb + 31 + 30 + 31 + 30 + 31 + 31 + 30;
+    *endDay = daysUntilNov + (7 - ((year + year / 4 - year / 100 + year / 400 + daysUntilNov) % 7));
+}
+
+// Function to check if the current day is within DST period
+bool isDaylightSavingTime(int year, int daysPassed)
+{
+    int startDay, endDay;
+    calculateDSTDays(year, &startDay, &endDay);
+    return (daysPassed >= startDay && daysPassed < endDay);
 }
