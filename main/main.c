@@ -137,6 +137,19 @@ void app_main(void)
         char service_name[12];
         get_device_service_name(service_name, sizeof(service_name));
 
+        /* Do we want a proof-of-possession (ignored if Security 0 is selected):
+         *      - this should be a string with length > 0
+         *      - NULL if not used
+         */
+        const char *pop = "WWVB-ESPIDF";
+
+        /* This is the structure for passing security parameters
+         * for the protocomm security 1.
+         */
+        wifi_prov_security1_params_t *sec_params = pop;
+
+        const char *username  = NULL;
+
         uint8_t custom_service_uuid[] = {
             /* LSB <---------------------------------------
              * ---------------------------------------> MSB */
@@ -147,7 +160,7 @@ void app_main(void)
         wifi_prov_scheme_ble_set_service_uuid(custom_service_uuid);
 
         /* Start provisioning service */
-        ESP_ERROR_CHECK(wifi_prov_mgr_start_provisioning(WIFI_PROV_SECURITY_0, NULL, service_name, NULL));
+        ESP_ERROR_CHECK(wifi_prov_mgr_start_provisioning(WIFI_PROV_SECURITY_1, (const void *) sec_params, service_name, NULL));
     }
     else
     {
