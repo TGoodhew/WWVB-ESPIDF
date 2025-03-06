@@ -47,6 +47,7 @@ void LogCurrentTime();
 static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
 static void get_device_service_name(char *service_name, size_t max);
 void Setup60KHzOutput();
+void SNTP_callback (struct timeval *tv);
 
 // WWVB related
 const char *ntpServer = "pool.ntp.org";
@@ -141,7 +142,7 @@ void app_main(void)
          *      - this should be a string with length > 0
          *      - NULL if not used
          */
-        const char *pop = "WWVB-ESPIDF";
+        const char *pop = "abcd1234";
 
         /* This is the structure for passing security parameters
          * for the protocomm security 1.
@@ -181,6 +182,9 @@ void app_main(void)
     
 
     esp_sntp_config_t sntp_config = ESP_NETIF_SNTP_DEFAULT_CONFIG(ntpServer);
+    sntp_config.sync_cb = SNTP_callback;
+
+    //sntp_set_time_sync_notification_cb(SNTP_callback);
     esp_netif_sntp_init(&sntp_config);
 
     if (esp_netif_sntp_sync_wait(pdMS_TO_TICKS(10000)) != ESP_OK) {
@@ -201,8 +205,12 @@ void app_main(void)
         SetupWWVBArray();
         vTaskDelay(500 / portTICK_PERIOD_MS);
     }
-    
-    //BoardDebugTest(); // This is just to show the board is working
+}
+
+void SNTP_callback (struct timeval *tv)
+{
+    ESP_LOGI("SNTP", "SNTP Syncronized");
+    ESP_ERROR_CHECK(esp_timer_start_periodic(TimerSecond, 1000000)); // 1 second
 }
 
 void LogCurrentTime()
@@ -248,7 +256,6 @@ void SetupTimers()
         .callback = &TimerSecond_ISR,
         .name = "One Second Timer"};
     ESP_ERROR_CHECK(esp_timer_create(&timer_second_config, &TimerSecond));
-    ESP_ERROR_CHECK(esp_timer_start_periodic(TimerSecond, 1000000)); // 1 second
 
     // Setup Bit 0 timer
     const esp_timer_create_args_t timer_bit0_config = {
@@ -592,11 +599,6 @@ void TimerSecond_ISR(void *param)
       #endif
   }
 
-}
-
-void time_sync_notification_cb(struct timeval *tv)
-{
-    ESP_LOGI("SNTP", "Notification of a time synchronization event");
 }
 
 static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
