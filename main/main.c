@@ -14,7 +14,7 @@
     0.5   Added BLE WiFi provisioning using the ESP-IDF example code
     0.6   Added SNTP call & synd to get UTC time
     0.7   Added 60KHz output using the ESP32 LEDC PWM
-    0.8   Implemented ESP Logging
+    0.8   Implemented ESP Logging & Error Checking
 */
 
 #include <stdio.h>
@@ -51,6 +51,8 @@ void TimerSignalReenable_ISR();
 void ZeroCarrier();
 void TimerSecond_ISR();
 void BoardDebugTest();
+void SetupWiFi();
+void SetupSNTP();
 void SetupTimers();
 void SetupWWVBArray();
 bool isLeapYear(int year);
@@ -108,8 +110,59 @@ void app_main(void)
         ESP_ERROR_CHECK(nvs_flash_init());
     }
 
-    ESP_LOGI("WiFi", "Connecting to WiFi");
+    ESP_LOGI("WiFi", "Initializing WiFi");
 
+    SetupWiFi();
+
+    ESP_LOGI("SNTP", "Initializing SNTP");
+
+    SetupSNTP();
+
+    ESP_LOGI("SNTP", "Initializing WWVBArray");
+
+    SetupWWVBArray();
+
+    ESP_LOGI("SNTP", "Initializing Timers");
+
+    SetupTimers();
+
+    ESP_LOGI("SNTP", "Initializing Signal Output");
+
+    Setup60KHzOutput();
+
+    while (1)
+    {
+        SetupWWVBArray();
+        vTaskDelay(500 / portTICK_PERIOD_MS);
+    }
+}
+
+void SetupSNTP()
+{
+    esp_sntp_config_t sntp_config = ESP_NETIF_SNTP_DEFAULT_CONFIG(ntpServer);
+    sntp_config.sync_cb = SNTP_callback;
+
+    // sntp_set_time_sync_notification_cb(SNTP_callback);
+    ESP_ERROR_CHECK(esp_netif_sntp_init(&sntp_config));
+
+    if (esp_netif_sntp_sync_wait(pdMS_TO_TICKS(10000)) != ESP_OK)
+    {
+        ESP_LOGI("SNTP", "Failed to update system time within 10s timeout");
+    }
+    else
+    {
+        ESP_LOGI("SNTP", "System time updated");
+    }
+}
+
+void SNTP_callback (struct timeval *tv)
+{
+    ESP_LOGI("SNTP", "SNTP Syncronized");
+    ESP_ERROR_CHECK(esp_timer_start_periodic(TimerSecond, 1000000)); // 1 second
+}
+
+void SetupWiFi()
+{
     /* Initialize TCP/IP */
     ESP_ERROR_CHECK(esp_netif_init());
 
@@ -132,19 +185,18 @@ void app_main(void)
     /* Configuration for the provisioning manager */
     wifi_prov_mgr_config_t wifi_prov_config = {
         .scheme = wifi_prov_scheme_ble,
-        .scheme_event_handler = WIFI_PROV_SCHEME_BLE_EVENT_HANDLER_FREE_BTDM
-    };
+        .scheme_event_handler = WIFI_PROV_SCHEME_BLE_EVENT_HANDLER_FREE_BTDM};
 
     /* Initialize provisioning manager with the configuration parameters set above */
-    ESP_ERROR_CHECK( wifi_prov_mgr_init(wifi_prov_config) );
+    ESP_ERROR_CHECK(wifi_prov_mgr_init(wifi_prov_config));
 
     /* Let's find out if the device is provisioned */
-    ESP_ERROR_CHECK( wifi_prov_mgr_is_provisioned(&is_provisioned) );
+    ESP_ERROR_CHECK(wifi_prov_mgr_is_provisioned(&is_provisioned));
 
     ESP_LOGI("WiFI", "Is provisioned: %s", is_provisioned ? "true" : "false");
 
     /* If device is not yet provisioned start provisioning service */
-    if (!is_provisioned) 
+    if (!is_provisioned)
     {
         ESP_LOGI("WiFi", "Starting provisioning");
 
@@ -165,14 +217,28 @@ void app_main(void)
         uint8_t custom_service_uuid[] = {
             /* LSB <---------------------------------------
              * ---------------------------------------> MSB */
-            0xb4, 0xdf, 0x5a, 0x1c, 0x3f, 0x6b, 0xf4, 0xbf,
-            0xea, 0x4a, 0x82, 0x03, 0x04, 0x90, 0x1a, 0x02,
+            0xb4,
+            0xdf,
+            0x5a,
+            0x1c,
+            0x3f,
+            0x6b,
+            0xf4,
+            0xbf,
+            0xea,
+            0x4a,
+            0x82,
+            0x03,
+            0x04,
+            0x90,
+            0x1a,
+            0x02,
         };
 
         ESP_ERROR_CHECK(wifi_prov_scheme_ble_set_service_uuid(custom_service_uuid));
 
         /* Start provisioning service */
-        ESP_ERROR_CHECK(wifi_prov_mgr_start_provisioning(WIFI_PROV_SECURITY_1, (const void *) sec_params, service_name, NULL));
+        ESP_ERROR_CHECK(wifi_prov_mgr_start_provisioning(WIFI_PROV_SECURITY_1, (const void *)sec_params, service_name, NULL));
     }
     else
     {
@@ -184,44 +250,71 @@ void app_main(void)
         /* Start Wi-Fi station */
         ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
         ESP_ERROR_CHECK(esp_wifi_start());
-        
+
         ESP_LOGI("WiFi", "Connected");
-    }
-
-    ESP_LOGI("SNTP", "Initializing SNTP");
-
-    
-
-    esp_sntp_config_t sntp_config = ESP_NETIF_SNTP_DEFAULT_CONFIG(ntpServer);
-    sntp_config.sync_cb = SNTP_callback;
-
-    //sntp_set_time_sync_notification_cb(SNTP_callback);
-    ESP_ERROR_CHECK(esp_netif_sntp_init(&sntp_config));
-
-    if (esp_netif_sntp_sync_wait(pdMS_TO_TICKS(10000)) != ESP_OK) {
-        ESP_LOGI("SNTP","Failed to update system time within 10s timeout");
-    }
-    else {
-        ESP_LOGI("SNTP","System time updated");
-    }
-
-    SetupWWVBArray();
-
-    SetupTimers();
-
-    Setup60KHzOutput();
-
-    while (1)
-    {
-        SetupWWVBArray();
-        vTaskDelay(500 / portTICK_PERIOD_MS);
     }
 }
 
-void SNTP_callback (struct timeval *tv)
+static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
 {
-    ESP_LOGI("SNTP", "SNTP Syncronized");
-    ESP_ERROR_CHECK(esp_timer_start_periodic(TimerSecond, 1000000)); // 1 second
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) 
+    {
+        ESP_ERROR_CHECK(esp_wifi_connect());
+    } 
+    else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) 
+    {
+        if (s_retry_num < 10) 
+        {
+            ESP_ERROR_CHECK(esp_wifi_connect());
+            s_retry_num++;
+            ESP_LOGI("WiFi", "retry to connect to the AP");
+        } 
+        else 
+        {
+            xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
+        }
+        ESP_LOGI("WiFi","connect to the AP fail");
+    } 
+    else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) 
+    {
+        ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
+        ESP_LOGI("WiFi", "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
+        s_retry_num = 0;
+        xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+    } 
+    else if (event_base == WIFI_PROV_EVENT) 
+    {
+        switch (event_id) 
+        {
+            case WIFI_PROV_START:
+                ESP_LOGI("WiFi", "Provisioning started");
+                break;
+            case WIFI_PROV_CRED_RECV: 
+            {
+                wifi_sta_config_t *wifi_sta_cfg = (wifi_sta_config_t *)event_data;
+                ESP_LOGI("WiFi", "Received Wi-Fi credentials"
+                         "\n\tSSID     : %s\n\tPassword : %s",
+                         (const char *) wifi_sta_cfg->ssid,
+                         (const char *) wifi_sta_cfg->password);
+                break;
+            }
+            case WIFI_PROV_CRED_FAIL: 
+            {
+                wifi_prov_sta_fail_reason_t *reason = (wifi_prov_sta_fail_reason_t *)event_data;
+                ESP_LOGE("WiFi", "Provisioning failed!\n\tReason : %s" "\n\tPlease reset to factory and retry provisioning",  (*reason == WIFI_PROV_STA_AUTH_ERROR) ?  "Wi-Fi station authentication failed" : "Wi-Fi access-point not found");
+                break;
+            }
+            case WIFI_PROV_CRED_SUCCESS:
+                ESP_LOGI("WiFi", "Provisioning successful");
+                break;
+            case WIFI_PROV_END:
+                /* De-initialize manager once provisioning is finished */
+                wifi_prov_mgr_deinit();
+                break;
+            default:
+                break;
+        }
+    }
 }
 
 void LogCurrentTime()
@@ -285,6 +378,82 @@ void SetupTimers()
         .callback = &TimerSignalReenable_ISR,
         .name = "Bit Marker Timer"};
     ESP_ERROR_CHECK(esp_timer_create(&timer_bitmarker_config, &TimerBitMarker));
+}
+
+// All the bit/marker timers just reenable the 50%^ duty cycle of the 60KHz signal
+void IRAM_ATTR TimerSignalReenable_ISR()
+{
+    //analogWrite(A0, 127);
+    ESP_ERROR_CHECK(ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, 127));
+    ESP_ERROR_CHECK(ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel));
+}
+
+void TimerSecond_ISR(void *param)
+{
+  static bool ON;
+  ON = !ON;
+  
+  ESP_ERROR_CHECK(gpio_set_level(GPIO_NUM_13, ON));
+
+  switch (WWVBArray[slot])
+  {
+  case 0:
+  {
+      #ifdef WWVBDEBUG
+      printf("0");
+      #endif
+
+      // 0 (0.2s reduced power)
+      ZeroCarrier();
+
+      // TimerBit0
+      ESP_ERROR_CHECK(esp_timer_start_once(TimerBit0, 200000)); // 0.2 second
+    }
+  break;
+  case 1:
+  {
+      #ifdef WWVBDEBUG
+      printf("1");
+      #endif
+
+      // 1 (0.5s reduced power)
+      ZeroCarrier();
+
+      // TimerBit1
+      ESP_ERROR_CHECK(esp_timer_start_once(TimerBit1, 500000)); // 0.5 second
+
+  }
+  break;
+  case 2:
+  {
+      #ifdef WWVBDEBUG
+      printf("M");
+      #endif
+
+      // Marker (0.8s reduced power)
+      ZeroCarrier();
+
+      // TimerBitMarker
+      ESP_ERROR_CHECK(esp_timer_start_once(TimerBitMarker, 800000)); // 0.8 second
+  }
+  break;
+  }
+
+  slot++; // Advance data slot in minute data packet
+  if (slot == 60)
+  {
+      slot = 0; // Reset slot to 0 if at 60 seconds
+      #ifdef WWVBDEBUG
+      printf("\n");
+      LogCurrentTime();
+      #endif
+  }
+}
+
+void ZeroCarrier()
+{
+    ESP_ERROR_CHECK(ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, 0));
+    ESP_ERROR_CHECK(ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel));
 }
 
 // This rotuine takes the input value and then breaks it out in the individual BCD pattern that the WWVB format expects
@@ -442,7 +611,6 @@ void setDST(bool IsDST, uint8_t *signal)
     }
 }
 
-
 void Setup60KHzOutput()
 {
     ledc_timer_config_t ledc_timer = {
@@ -461,144 +629,6 @@ void Setup60KHzOutput()
     ledc_channel.timer_sel = LEDC_TIMER_0;
 
     ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
-}
-
-// All the bit/marker timers just reenable the 50%^ duty cycle of the 60KHz signal
-void IRAM_ATTR TimerSignalReenable_ISR()
-{
-    //analogWrite(A0, 127);
-    ESP_ERROR_CHECK(ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, 127));
-    ESP_ERROR_CHECK(ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel));
-}
-
-void TimerSecond_ISR(void *param)
-{
-  static bool ON;
-  ON = !ON;
-  
-  ESP_ERROR_CHECK(gpio_set_level(GPIO_NUM_13, ON));
-
-  switch (WWVBArray[slot])
-  {
-  case 0:
-  {
-      #ifdef WWVBDEBUG
-      printf("0");
-      #endif
-
-      // 0 (0.2s reduced power)
-      ZeroCarrier();
-
-      // TimerBit0
-      ESP_ERROR_CHECK(esp_timer_start_once(TimerBit0, 200000)); // 0.2 second
-    }
-  break;
-  case 1:
-  {
-      #ifdef WWVBDEBUG
-      printf("1");
-      #endif
-
-      // 1 (0.5s reduced power)
-      ZeroCarrier();
-
-      // TimerBit1
-      ESP_ERROR_CHECK(esp_timer_start_once(TimerBit1, 500000)); // 0.5 second
-
-  }
-  break;
-  case 2:
-  {
-      #ifdef WWVBDEBUG
-      printf("M");
-      #endif
-
-      // Marker (0.8s reduced power)
-      ZeroCarrier();
-
-      // TimerBitMarker
-      ESP_ERROR_CHECK(esp_timer_start_once(TimerBitMarker, 800000)); // 0.8 second
-  }
-  break;
-  }
-
-  slot++; // Advance data slot in minute data packet
-  if (slot == 60)
-  {
-      slot = 0; // Reset slot to 0 if at 60 seconds
-      #ifdef WWVBDEBUG
-      printf("\n");
-      LogCurrentTime();
-      #endif
-  }
-}
-
-void ZeroCarrier()
-{
-    ESP_ERROR_CHECK(ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, 0));
-    ESP_ERROR_CHECK(ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel));
-}
-
-static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
-{
-    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) 
-    {
-        ESP_ERROR_CHECK(esp_wifi_connect());
-    } 
-    else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) 
-    {
-        if (s_retry_num < 10) 
-        {
-            ESP_ERROR_CHECK(esp_wifi_connect());
-            s_retry_num++;
-            ESP_LOGI("WiFi", "retry to connect to the AP");
-        } 
-        else 
-        {
-            xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
-        }
-        ESP_LOGI("WiFi","connect to the AP fail");
-    } 
-    else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) 
-    {
-        ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
-        ESP_LOGI("WiFi", "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
-        s_retry_num = 0;
-        xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
-    } 
-    else if (event_base == WIFI_PROV_EVENT) 
-    {
-        switch (event_id) 
-        {
-            case WIFI_PROV_START:
-                ESP_LOGI("WiFi", "Provisioning started");
-                break;
-            case WIFI_PROV_CRED_RECV: 
-            {
-                wifi_sta_config_t *wifi_sta_cfg = (wifi_sta_config_t *)event_data;
-                ESP_LOGI("WiFi", "Received Wi-Fi credentials"
-                         "\n\tSSID     : %s\n\tPassword : %s",
-                         (const char *) wifi_sta_cfg->ssid,
-                         (const char *) wifi_sta_cfg->password);
-                break;
-            }
-            case WIFI_PROV_CRED_FAIL: 
-            {
-                wifi_prov_sta_fail_reason_t *reason = (wifi_prov_sta_fail_reason_t *)event_data;
-                ESP_LOGE("WiFi", "Provisioning failed!\n\tReason : %s" "\n\tPlease reset to factory and retry provisioning",  (*reason == WIFI_PROV_STA_AUTH_ERROR) ?  "Wi-Fi station authentication failed" : "Wi-Fi access-point not found");
-                break;
-            }
-            case WIFI_PROV_CRED_SUCCESS:
-                ESP_LOGI("WiFi", "Provisioning successful");
-                break;
-            case WIFI_PROV_END:
-                /* De-initialize manager once provisioning is finished */
-                wifi_prov_mgr_deinit();
-                break;
-            default:
-                break;
-        }
-    }
 }
 
 static void get_device_service_name(char *service_name, size_t max)
