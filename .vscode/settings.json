@@ -1,6 +1,6 @@
 {
     "C_Cpp.intelliSenseEngine": "default",
-    "idf.espIdfPathWin": "C:\\Users\\Tony\\esp\\v5.4\\esp-idf",
+    "idf.espIdfPathWin": "C:\\Users\\tony\\esp\\v5.5.2\\esp-idf",
     "idf.pythonInstallPath": "C:\\Users\\Tony\\.espressif\\tools\\idf-python\\3.11.2\\python.exe",
     "idf.openOcdConfigs": [
         "interface/ftdi/esp32_devkitj_v1.cfg",
