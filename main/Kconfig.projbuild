@@ -1,0 +1,39 @@
+menu "WWVB Configuration"
+
+    config WWVB_OUTPUT_PIN
+        int "WWVB Output GPIO Pin"
+        range 0 39
+        default 26
+        help
+            GPIO pin number for WWVB 60kHz signal output.
+            Default is 26 (A0 on the Huzzah32 Featherboard).
+            Valid range: 0-39 (ESP32 GPIO range).
+            Note: GPIOs 6-11 are typically used for SPI flash and should be avoided.
+
+    config WWVB_DEBUG_LED_PIN
+        int "Debug LED GPIO Pin"
+        range 0 39
+        default 13
+        help
+            GPIO pin number for debug LED output.
+            Default is 13.
+            Valid range: 0-39 (ESP32 GPIO range).
+            Note: GPIOs 6-11 are typically used for SPI flash and should be avoided.
+
+    config WWVB_NTP_SERVER
+        string "NTP Server"
+        default "pool.ntp.org"
+        help
+            NTP server hostname or IP address for time synchronization.
+            Default is "pool.ntp.org".
+
+    config WIFI_MAX_RETRY
+        int "WiFi Connection Max Retry"
+        range 1 100
+        default 10
+        help
+            Maximum number of WiFi connection retry attempts.
+            Default is 10.
+            Valid range: 1-100.
+
+endmenu
