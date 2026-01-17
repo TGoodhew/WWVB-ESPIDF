@@ -74,7 +74,6 @@ volatile uint8_t slot = 0;
 #define DEBUG_QUEUE_SIZE 10
 typedef struct {
     char type;  // '0', '1', 'M', or 'N' for newline/time log
-    uint8_t slot_value;
 } debug_msg_t;
 QueueHandle_t debug_queue = NULL;
 
@@ -165,7 +164,10 @@ void app_main(void)
         ESP_LOGE("Main", "Failed to create debug queue");
     } else {
         // Create debug task to handle logging from ISR
-        xTaskCreate(debug_task, "debug_task", 2048, NULL, 5, NULL);
+        BaseType_t task_created = xTaskCreate(debug_task, "debug_task", 2048, NULL, 5, NULL);
+        if (task_created != pdPASS) {
+            ESP_LOGE("Main", "Failed to create debug task");
+        }
     }
 
     while (1)
@@ -501,7 +503,7 @@ void TimerSecond_ISR(void *param)
       #ifdef WWVBDEBUG
       // Defer debug output to task context via queue
       if (debug_queue != NULL) {
-          debug_msg_t msg = {.type = '0', .slot_value = slot};
+          debug_msg_t msg = {.type = '0'};
           xQueueSendFromISR(debug_queue, &msg, NULL);
       }
       #endif
@@ -521,7 +523,7 @@ void TimerSecond_ISR(void *param)
       #ifdef WWVBDEBUG
       // Defer debug output to task context via queue
       if (debug_queue != NULL) {
-          debug_msg_t msg = {.type = '1', .slot_value = slot};
+          debug_msg_t msg = {.type = '1'};
           xQueueSendFromISR(debug_queue, &msg, NULL);
       }
       #endif
@@ -542,7 +544,7 @@ void TimerSecond_ISR(void *param)
       #ifdef WWVBDEBUG
       // Defer debug output to task context via queue
       if (debug_queue != NULL) {
-          debug_msg_t msg = {.type = 'M', .slot_value = slot};
+          debug_msg_t msg = {.type = 'M'};
           xQueueSendFromISR(debug_queue, &msg, NULL);
       }
       #endif
@@ -566,7 +568,7 @@ void TimerSecond_ISR(void *param)
       #ifdef WWVBDEBUG
       // Defer debug output and logging to task context via queue
       if (debug_queue != NULL) {
-          debug_msg_t msg = {.type = 'N', .slot_value = slot};
+          debug_msg_t msg = {.type = 'N'};
           xQueueSendFromISR(debug_queue, &msg, NULL);
       }
       #endif
