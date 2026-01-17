@@ -189,6 +189,7 @@ void app_main(void)
     wwvb_update_semaphore = xSemaphoreCreateBinary();
     if (wwvb_update_semaphore == NULL) {
         ESP_LOGE("Main", "Failed to create WWVB update semaphore");
+        ESP_LOGE("Main", "WARNING: WWVB array will NOT be updated at minute boundaries!");
     } else {
         // Create task to handle WWVB array updates at minute boundaries
         BaseType_t task_created = xTaskCreate(wwvb_update_task, "wwvb_update", 
@@ -196,6 +197,7 @@ void app_main(void)
                                                WWVB_UPDATE_TASK_PRIORITY, NULL);
         if (task_created != pdPASS) {
             ESP_LOGE("Main", "Failed to create WWVB update task");
+            ESP_LOGE("Main", "WARNING: WWVB array will NOT be updated at minute boundaries!");
         }
     }
 
