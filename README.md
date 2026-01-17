@@ -1,4 +1,4 @@
-This is an emualtor for the WWVB signal running on an Adafruit Huzzah32 Featherboard.
+This is an emulator for the WWVB signal running on an Adafruit Huzzah32 Featherboard.
 
 The goal here is to create a small device that will get the current time via NTP and then use a GPIO pin to generate an emulated WWVB signal.
 

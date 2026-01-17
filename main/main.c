@@ -125,8 +125,8 @@ void app_main(void)
 
     ESP_LOGI("GPIO", "Configuring GPIO");
 
-    gpio_reset_pin(CONFIG_WWVB_DEBUG_LED_PIN);
-    gpio_set_direction(CONFIG_WWVB_DEBUG_LED_PIN, GPIO_MODE_OUTPUT);
+    gpio_reset_pin((gpio_num_t)CONFIG_WWVB_DEBUG_LED_PIN);
+    gpio_set_direction((gpio_num_t)CONFIG_WWVB_DEBUG_LED_PIN, GPIO_MODE_OUTPUT);
 
     ESP_LOGI("NVS", "Initializing NVS partition");
 
@@ -496,7 +496,7 @@ void TimerSecond_ISR(void *param)
   ON = !ON;
   
   // Remove ESP_ERROR_CHECK - just call the function directly
-  gpio_set_level(CONFIG_WWVB_DEBUG_LED_PIN, ON);
+  gpio_set_level((gpio_num_t)CONFIG_WWVB_DEBUG_LED_PIN, ON);
 
   // Validate slot index before accessing WWVBArray
   if (slot >= 60)
@@ -851,7 +851,7 @@ void Setup60KHzOutput()
 
     ledc_channel.channel = LEDC_CHANNEL_0;
     ledc_channel.duty = 127;
-    ledc_channel.gpio_num = CONFIG_WWVB_OUTPUT_PIN; // A0 on the Huzzah32
+    ledc_channel.gpio_num = (gpio_num_t)CONFIG_WWVB_OUTPUT_PIN; // A0 on the Huzzah32
     ledc_channel.speed_mode = LEDC_HIGH_SPEED_MODE;
     ledc_channel.timer_sel = LEDC_TIMER_0;
 
