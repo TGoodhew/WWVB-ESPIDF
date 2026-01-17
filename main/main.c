@@ -69,7 +69,7 @@ void SNTP_callback (struct timeval *tv);
 void debug_task(void *pvParameters);
 
 // WWVB related
-const char *ntpServer = "pool.ntp.org";
+const char *ntpServer = CONFIG_WWVB_NTP_SERVER;
 uint8_t WWVBArray[60] = {0};
 volatile uint8_t slot = 0;
 
@@ -125,8 +125,8 @@ void app_main(void)
 
     ESP_LOGI("GPIO", "Configuring GPIO");
 
-    gpio_reset_pin(GPIO_NUM_13);
-    gpio_set_direction(GPIO_NUM_13, GPIO_MODE_OUTPUT);
+    gpio_reset_pin(CONFIG_WWVB_DEBUG_LED_PIN);
+    gpio_set_direction(CONFIG_WWVB_DEBUG_LED_PIN, GPIO_MODE_OUTPUT);
 
     ESP_LOGI("NVS", "Initializing NVS partition");
 
@@ -342,7 +342,7 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
     } 
     else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) 
     {
-        if (s_retry_num < 10) 
+        if (s_retry_num < CONFIG_WIFI_MAX_RETRY) 
         {
             ESP_ERROR_CHECK(esp_wifi_connect());
             s_retry_num++;
@@ -496,7 +496,7 @@ void TimerSecond_ISR(void *param)
   ON = !ON;
   
   // Remove ESP_ERROR_CHECK - just call the function directly
-  gpio_set_level(GPIO_NUM_13, ON);
+  gpio_set_level(CONFIG_WWVB_DEBUG_LED_PIN, ON);
 
   // Validate slot index before accessing WWVBArray
   if (slot >= 60)
@@ -851,7 +851,7 @@ void Setup60KHzOutput()
 
     ledc_channel.channel = LEDC_CHANNEL_0;
     ledc_channel.duty = 127;
-    ledc_channel.gpio_num = GPIO_NUM_26; // A0 on the Huzzah32
+    ledc_channel.gpio_num = CONFIG_WWVB_OUTPUT_PIN; // A0 on the Huzzah32
     ledc_channel.speed_mode = LEDC_HIGH_SPEED_MODE;
     ledc_channel.timer_sel = LEDC_TIMER_0;
 
