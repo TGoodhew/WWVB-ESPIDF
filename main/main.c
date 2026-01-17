@@ -851,7 +851,7 @@ void Setup60KHzOutput()
 
     ledc_channel.channel = LEDC_CHANNEL_0;
     ledc_channel.duty = 127;
-    ledc_channel.gpio_num = (gpio_num_t)CONFIG_WWVB_OUTPUT_PIN; // A0 on the Huzzah32
+    ledc_channel.gpio_num = (gpio_num_t)CONFIG_WWVB_OUTPUT_PIN; // Configurable GPIO for WWVB output (default: 26/A0 on Huzzah32)
     ledc_channel.speed_mode = LEDC_HIGH_SPEED_MODE;
     ledc_channel.timer_sel = LEDC_TIMER_0;
 
