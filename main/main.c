@@ -179,11 +179,13 @@ void app_main(void)
         // Check if the ISR signaled that we need to update the array
         if (update_wwvb_array)
         {
+            // Clear flag first to avoid missing updates
             update_wwvb_array = false;
             SetupWWVBArray();
         }
-        // Sleep for 1 second instead of 500ms
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        // Sleep for 500ms to ensure flag is checked frequently
+        // Updates happen when signaled by ISR (at slot 30 and slot 60, i.e., twice per minute)
+        vTaskDelay(500 / portTICK_PERIOD_MS);
     }
 }
 
@@ -588,6 +590,11 @@ void TimerSecond_ISR(void *param)
           xQueueSendFromISR(debug_queue, &msg, NULL);
       }
       #endif
+  }
+  else if (slot == 30)
+  {
+      // Update at 30 seconds as well to ensure at least 2 updates per minute
+      update_wwvb_array = true;
   }
 }
 
