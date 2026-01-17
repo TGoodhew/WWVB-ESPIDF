@@ -447,6 +447,13 @@ void TimerSecond_ISR(void *param)
   
   ESP_ERROR_CHECK(gpio_set_level(GPIO_NUM_13, ON));
 
+  // Validate slot index before accessing WWVBArray
+  if (slot >= 60)
+  {
+      ESP_LOGE("Timer", "slot %d is out of bounds (0-59), resetting to 0", slot);
+      slot = 0;
+  }
+
   switch (WWVBArray[slot])
   {
   case 0:
@@ -548,6 +555,19 @@ uint16_t BitsEncoder(uint16_t n)
 // WWVB Expects year to be in 8 bit BCD - https://en.wikipedia.org/wiki/WWVB#Amplitude-modulated_time_code
 void encodeYear(uint16_t year, uint8_t *signal)
 {
+    // Validate input parameters
+    if (signal == NULL)
+    {
+        ESP_LOGE("WWVB", "encodeYear: signal pointer is NULL");
+        return;
+    }
+    
+    if (year < 2000 || year > 2099)
+    {
+        ESP_LOGE("WWVB", "encodeYear: year %d is out of valid range (2000-2099)", year);
+        return;
+    }
+
     int yearBCD = year % 100;
     uint16_t bitsResult = BitsEncoder(yearBCD);
 
@@ -564,6 +584,19 @@ void encodeYear(uint16_t year, uint8_t *signal)
 // WWVB Expects the day of the year to be in 10 bit BCD - https://en.wikipedia.org/wiki/WWVB#Amplitude-modulated_time_code
 void encodeDayOfYear(uint16_t dayOfYear, uint8_t *signal)
 {
+    // Validate input parameters
+    if (signal == NULL)
+    {
+        ESP_LOGE("WWVB", "encodeDayOfYear: signal pointer is NULL");
+        return;
+    }
+    
+    if (dayOfYear < 1 || dayOfYear > 366)
+    {
+        ESP_LOGE("WWVB", "encodeDayOfYear: dayOfYear %d is out of valid range (1-366)", dayOfYear);
+        return;
+    }
+
     uint16_t bitsResult = BitsEncoder(dayOfYear);
 
     signal[22] = (bitsResult & 0x0200) >> 9;
@@ -581,6 +614,19 @@ void encodeDayOfYear(uint16_t dayOfYear, uint8_t *signal)
 // WWVB Expects the hour to be in 6 bit BCD - https://en.wikipedia.org/wiki/WWVB#Amplitude-modulated_time_code
 void encodeHour(uint8_t hour, uint8_t *signal)
 {
+    // Validate input parameters
+    if (signal == NULL)
+    {
+        ESP_LOGE("WWVB", "encodeHour: signal pointer is NULL");
+        return;
+    }
+    
+    if (hour > 23)
+    {
+        ESP_LOGE("WWVB", "encodeHour: hour %d is out of valid range (0-23)", hour);
+        return;
+    }
+
     uint16_t bitsResult = BitsEncoder(hour);
 
     signal[12] = (bitsResult & 0x20) >> 5;
@@ -594,6 +640,19 @@ void encodeHour(uint8_t hour, uint8_t *signal)
 // WWVB Expects minutes to be in 7 bit BCD - https://en.wikipedia.org/wiki/WWVB#Amplitude-modulated_time_code
 void encodeMinute(uint8_t minute, uint8_t *signal)
 {
+    // Validate input parameters
+    if (signal == NULL)
+    {
+        ESP_LOGE("WWVB", "encodeMinute: signal pointer is NULL");
+        return;
+    }
+    
+    if (minute > 59)
+    {
+        ESP_LOGE("WWVB", "encodeMinute: minute %d is out of valid range (0-59)", minute);
+        return;
+    }
+
     uint16_t bitsResult = BitsEncoder(minute);
 
     signal[1] = (bitsResult & 0x40) >> 6;
@@ -608,6 +667,13 @@ void encodeMinute(uint8_t minute, uint8_t *signal)
 // The WWVB signal has certain marker and bits that are always set to either a marker bit or a zero
 void setMarkersAndIndicators(uint8_t *signal)
 {
+    // Validate input parameters
+    if (signal == NULL)
+    {
+        ESP_LOGE("WWVB", "setMarkersAndIndicators: signal pointer is NULL");
+        return;
+    }
+
     signal[0] = 2;  // Position marker
     signal[9] = 2;  // Position marker
     signal[19] = 2; // Position marker
@@ -632,7 +698,14 @@ void setMarkersAndIndicators(uint8_t *signal)
 // WWVB once supported celestial navigation uses but as it was deprecated and this scenario doesn't need it then just set those bits to 0 - https://en.wikipedia.org/wiki/WWVB#Amplitude-modulated_time_code
 void setDUT1(uint8_t *signal)
 {
-    // DUT1 is obselete, it was used for celestial navigation
+    // Validate input parameters
+    if (signal == NULL)
+    {
+        ESP_LOGE("WWVB", "setDUT1: signal pointer is NULL");
+        return;
+    }
+
+    // DUT1 is obsolete, it was used for celestial navigation
     signal[36] = 0;
     signal[37] = 0;
     signal[38] = 0;
@@ -646,6 +719,19 @@ void setDUT1(uint8_t *signal)
 // I can't find where I got this code from so apologies for not crediting it to the appropriate person
 void setLeapYear(uint16_t year, uint8_t *signal)
 {
+    // Validate input parameters
+    if (signal == NULL)
+    {
+        ESP_LOGE("WWVB", "setLeapYear: signal pointer is NULL");
+        return;
+    }
+    
+    if (year < 2000 || year > 2099)
+    {
+        ESP_LOGE("WWVB", "setLeapYear: year %d is out of valid range (2000-2099)", year);
+        return;
+    }
+
     struct tm time_in = {0};
     time_in.tm_year = year - 1900;
     time_in.tm_mon = 2;  // March (0-based: January is 0)
@@ -663,6 +749,13 @@ void setLeapYear(uint16_t year, uint8_t *signal)
 // WWVB Expects this bit for a leap second, I don't believe it is useful in this scenario but setting it just in case - https://en.wikipedia.org/wiki/WWVB#Amplitude-modulated_time_code
 void setLeapSecond(bool IsLeap, uint8_t *signal)
 {
+    // Validate input parameters
+    if (signal == NULL)
+    {
+        ESP_LOGE("WWVB", "setLeapSecond: signal pointer is NULL");
+        return;
+    }
+
     if (IsLeap)
         signal[56] = 1;
     else
@@ -672,6 +765,13 @@ void setLeapSecond(bool IsLeap, uint8_t *signal)
 // WWVB Expects to have a DST bit set - It allows for warning of DST but we're ignoring that in this scenario - https://en.wikipedia.org/wiki/WWVB#Amplitude-modulated_time_code
 void setDST(bool IsDST, uint8_t *signal)
 {
+    // Validate input parameters
+    if (signal == NULL)
+    {
+        ESP_LOGE("WWVB", "setDST: signal pointer is NULL");
+        return;
+    }
+
     if (IsDST)
     {
         signal[57] = 1;
