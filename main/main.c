@@ -68,7 +68,7 @@ void setDST(bool IsDST, uint8_t *signal);
 uint16_t BitsEncoder(uint16_t n);
 void TimerSignalReenable_ISR();
 void ZeroCarrier();
-void TimerSecond_ISR();
+void TimerSecond_ISR(void *param);
 void BoardDebugTest();
 void SetupWiFi();
 void SetupSNTP();
@@ -86,34 +86,59 @@ void SNTP_callback (struct timeval *tv);
 void debug_task(void *pvParameters);
 
 // WWVB related
-const char *ntpServer = CONFIG_WWVB_NTP_SERVER;
-uint8_t WWVBArray[60] = {0};
-volatile uint8_t slot = 0;
+static const char *ntpServer = CONFIG_WWVB_NTP_SERVER;
+
+// WWVB state structure
+typedef struct {
+    uint8_t array[60];
+    volatile uint8_t slot;
+} wwvb_state_t;
+
+static wwvb_state_t wwvb_state = {
+    .array = {0},
+    .slot = 0
+};
 
 // Debug queue for ISR to task communication
 #define DEBUG_QUEUE_SIZE 10
 typedef struct {
     char type;  // '0', '1', 'M', or 'N' for newline/time log
 } debug_msg_t;
-QueueHandle_t debug_queue = NULL;
+static QueueHandle_t debug_queue = NULL;
 
-// WiFi Provisioning
-bool is_provisioned = false;
-int s_retry_num = 0;
-EventGroupHandle_t s_wifi_event_group;
-const int WIFI_CONNECTED_BIT = BIT0;
-const int WIFI_FAIL_BIT = BIT1;
+// WiFi state structure
+typedef struct {
+    bool is_provisioned;
+    int retry_count;
+    EventGroupHandle_t event_group;
+} wifi_state_t;
 
-// // Bit & Marker timers
-esp_timer_handle_t TimerBit0 = NULL;
-esp_timer_handle_t TimerBit1 = NULL;
-esp_timer_handle_t TimerBitMarker = NULL;
+static wifi_state_t wifi_state = {
+    .is_provisioned = false,
+    .retry_count = 0,
+    .event_group = NULL
+};
 
-// // One Second timer
-esp_timer_handle_t TimerSecond = NULL;
+static const int WIFI_CONNECTED_BIT = BIT0;
+static const int WIFI_FAIL_BIT = BIT1;
+
+// Timer handles structure
+typedef struct {
+    esp_timer_handle_t bit0;
+    esp_timer_handle_t bit1;
+    esp_timer_handle_t marker;
+    esp_timer_handle_t second;
+} timer_handles_t;
+
+static timer_handles_t timers = {
+    .bit0 = NULL,
+    .bit1 = NULL,
+    .marker = NULL,
+    .second = NULL
+};
 
 // 60KHz output
-ledc_channel_config_t ledc_channel;
+static ledc_channel_config_t ledc_channel;
 
 // Debug task to handle logging from ISR context
 void debug_task(void *pvParameters)
@@ -243,13 +268,13 @@ void SNTP_callback (struct timeval *tv)
     ESP_LOGI("SNTP", "SNTP Synchronized");
     
     // Validate timer handle before starting
-    if (TimerSecond == NULL)
+    if (timers.second == NULL)
     {
         ESP_LOGE("SNTP", "TimerSecond handle is NULL, cannot start timer");
         return;
     }
     
-    ESP_ERROR_CHECK(esp_timer_start_periodic(TimerSecond, TIMER_ONE_SECOND_US)); // 1 second
+    ESP_ERROR_CHECK(esp_timer_start_periodic(timers.second, TIMER_ONE_SECOND_US)); // 1 second
 }
 
 void SetupWiFi()
@@ -259,7 +284,7 @@ void SetupWiFi()
 
     /* Initialize the event loop */
     ESP_ERROR_CHECK(esp_event_loop_create_default());
-    s_wifi_event_group = xEventGroupCreate();
+    wifi_state.event_group = xEventGroupCreate();
 
     /* Register our event handler for Wi-Fi, IP and Provisioning related events */
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
@@ -282,12 +307,12 @@ void SetupWiFi()
     ESP_ERROR_CHECK(wifi_prov_mgr_init(wifi_prov_config));
 
     /* Let's find out if the device is provisioned */
-    ESP_ERROR_CHECK(wifi_prov_mgr_is_provisioned(&is_provisioned));
+    ESP_ERROR_CHECK(wifi_prov_mgr_is_provisioned(&wifi_state.is_provisioned));
 
-    ESP_LOGI("WiFI", "Is provisioned: %s", is_provisioned ? "true" : "false");
+    ESP_LOGI("WiFI", "Is provisioned: %s", wifi_state.is_provisioned ? "true" : "false");
 
     /* If device is not yet provisioned start provisioning service */
-    if (!is_provisioned)
+    if (!wifi_state.is_provisioned)
     {
         ESP_LOGI("WiFi", "Starting provisioning");
 
@@ -359,15 +384,15 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
     } 
     else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) 
     {
-        if (s_retry_num < CONFIG_WIFI_MAX_RETRY) 
+        if (wifi_state.retry_count < CONFIG_WIFI_MAX_RETRY) 
         {
             ESP_ERROR_CHECK(esp_wifi_connect());
-            s_retry_num++;
+            wifi_state.retry_count++;
             ESP_LOGI("WiFi", "retry to connect to the AP");
         } 
         else 
         {
-            xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
+            xEventGroupSetBits(wifi_state.event_group, WIFI_FAIL_BIT);
         }
         ESP_LOGI("WiFi","connect to the AP fail");
     } 
@@ -375,8 +400,8 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
     {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
         ESP_LOGI("WiFi", "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
-        s_retry_num = 0;
-        xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+        wifi_state.retry_count = 0;
+        xEventGroupSetBits(wifi_state.event_group, WIFI_CONNECTED_BIT);
     } 
     else if (event_base == WIFI_PROV_EVENT) 
     {
@@ -460,15 +485,15 @@ void SetupWWVBArray()
     }
 
     // Using the current UTC time fill in the WWVBArray
-    encodeYear(utcTime->tm_year + 1900, WWVBArray);
-    encodeDayOfYear(utcTime->tm_yday + 1, WWVBArray);
-    encodeHour(utcTime->tm_hour, WWVBArray);
-    encodeMinute(utcTime->tm_min, WWVBArray);
-    setMarkersAndIndicators(WWVBArray);
-    setDUT1(WWVBArray); // We're ignoring DUT1 as it has been deprecated and not used in this scenario
-    setLeapYear(utcTime->tm_year + 1900, WWVBArray);
-    setLeapSecond(false, WWVBArray); // Ignore leap seconds in this scenario
-    setDST(isDaylightSavingTime(utcTime->tm_year + 1900, utcTime->tm_yday + 1), WWVBArray);
+    encodeYear(utcTime->tm_year + 1900, wwvb_state.array);
+    encodeDayOfYear(utcTime->tm_yday + 1, wwvb_state.array);
+    encodeHour(utcTime->tm_hour, wwvb_state.array);
+    encodeMinute(utcTime->tm_min, wwvb_state.array);
+    setMarkersAndIndicators(wwvb_state.array);
+    setDUT1(wwvb_state.array); // We're ignoring DUT1 as it has been deprecated and not used in this scenario
+    setLeapYear(utcTime->tm_year + 1900, wwvb_state.array);
+    setLeapSecond(false, wwvb_state.array); // Ignore leap seconds in this scenario
+    setDST(isDaylightSavingTime(utcTime->tm_year + 1900, utcTime->tm_yday + 1), wwvb_state.array);
 }
 
 void SetupTimers()
@@ -477,25 +502,25 @@ void SetupTimers()
     const esp_timer_create_args_t timer_second_config = {
         .callback = &TimerSecond_ISR,
         .name = "One Second Timer"};
-    ESP_ERROR_CHECK(esp_timer_create(&timer_second_config, &TimerSecond));
+    ESP_ERROR_CHECK(esp_timer_create(&timer_second_config, &timers.second));
 
     // Setup Bit 0 timer
     const esp_timer_create_args_t timer_bit0_config = {
         .callback = &TimerSignalReenable_ISR,
         .name = "Bit 0 Timer"};
-    ESP_ERROR_CHECK(esp_timer_create(&timer_bit0_config, &TimerBit0));
+    ESP_ERROR_CHECK(esp_timer_create(&timer_bit0_config, &timers.bit0));
             
     // Setup Bit 1 timer
     const esp_timer_create_args_t timer_bit1_config = {
         .callback = &TimerSignalReenable_ISR,
         .name = "Bit 1 Timer"};
-    ESP_ERROR_CHECK(esp_timer_create(&timer_bit1_config, &TimerBit1));
+    ESP_ERROR_CHECK(esp_timer_create(&timer_bit1_config, &timers.bit1));
 
     // Setup Bit Marker timer
     const esp_timer_create_args_t timer_bitmarker_config = {
         .callback = &TimerSignalReenable_ISR,
         .name = "Bit Marker Timer"};
-    ESP_ERROR_CHECK(esp_timer_create(&timer_bitmarker_config, &TimerBitMarker));
+    ESP_ERROR_CHECK(esp_timer_create(&timer_bitmarker_config, &timers.marker));
 }
 
 // All the bit/marker timers just reenable the 50%^ duty cycle of the 60KHz signal
@@ -509,6 +534,7 @@ void IRAM_ATTR TimerSignalReenable_ISR()
 
 void TimerSecond_ISR(void *param)
 {
+  (void)param; // Suppress unused parameter warning
   static bool ON;
   ON = !ON;
   
@@ -516,12 +542,12 @@ void TimerSecond_ISR(void *param)
   gpio_set_level((gpio_num_t)CONFIG_WWVB_DEBUG_LED_PIN, ON);
 
   // Validate slot index before accessing WWVBArray
-  if (slot >= 60)
+  if (wwvb_state.slot >= 60)
   {
-      slot = 0;
+      wwvb_state.slot = 0;
   }
 
-  switch (WWVBArray[slot])
+  switch (wwvb_state.array[wwvb_state.slot])
   {
   case 0:
   {
@@ -537,9 +563,9 @@ void TimerSecond_ISR(void *param)
       ZeroCarrier();
 
       // TimerBit0 - Start timer without ESP_ERROR_CHECK
-      if (TimerBit0 != NULL)
+      if (timers.bit0 != NULL)
       {
-          esp_timer_start_once(TimerBit0, TIMER_BIT0_DURATION_US); // 0.2 second
+          esp_timer_start_once(timers.bit0, TIMER_BIT0_DURATION_US); // 0.2 second
       }
     }
   break;
@@ -557,9 +583,9 @@ void TimerSecond_ISR(void *param)
       ZeroCarrier();
 
       // TimerBit1 - Start timer without ESP_ERROR_CHECK
-      if (TimerBit1 != NULL)
+      if (timers.bit1 != NULL)
       {
-          esp_timer_start_once(TimerBit1, TIMER_BIT1_DURATION_US); // 0.5 second
+          esp_timer_start_once(timers.bit1, TIMER_BIT1_DURATION_US); // 0.5 second
       }
 
   }
@@ -578,18 +604,18 @@ void TimerSecond_ISR(void *param)
       ZeroCarrier();
 
       // TimerBitMarker - Start timer without ESP_ERROR_CHECK
-      if (TimerBitMarker != NULL)
+      if (timers.marker != NULL)
       {
-          esp_timer_start_once(TimerBitMarker, TIMER_MARKER_DURATION_US); // 0.8 second
+          esp_timer_start_once(timers.marker, TIMER_MARKER_DURATION_US); // 0.8 second
       }
   }
   break;
   }
 
-  slot++; // Advance data slot in minute data packet
-  if (slot == 60)
+  wwvb_state.slot++; // Advance data slot in minute data packet
+  if (wwvb_state.slot == 60)
   {
-      slot = 0; // Reset slot to 0 if at 60 seconds
+      wwvb_state.slot = 0; // Reset slot to 0 if at 60 seconds
       #ifdef WWVBDEBUG
       // Defer debug output and logging to task context via queue
       if (debug_queue != NULL) {
