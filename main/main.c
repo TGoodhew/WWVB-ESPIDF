@@ -981,7 +981,7 @@ void calculateDSTDays(int year, int *startDay, int *endDay)
     int jan1_dow = (h + 6) % 7;
     
     // ===== Calculate Second Sunday in March =====
-    int march1_doy = 31 + daysInFeb + 1; // Jan + Feb + 1 for March 1
+    int march1_doy = 31 + daysInFeb + 1; // Jan(31) + Feb(28/29) + Mar(1) for March 1
     int march1_dow = (jan1_dow + (march1_doy - 1)) % 7;
     
     // Days from March 1 until first Sunday
@@ -994,7 +994,7 @@ void calculateDSTDays(int year, int *startDay, int *endDay)
     *startDay = march1_doy - 1 + second_sunday_date; // -1 because march1_doy includes March 1
     
     // ===== Calculate First Sunday in November =====
-    int nov1_doy = 31 + daysInFeb + 31 + 30 + 31 + 30 + 31 + 31 + 30 + 31 + 1; // Through Oct + 1 for Nov 1
+    int nov1_doy = 31 + daysInFeb + 31 + 30 + 31 + 30 + 31 + 31 + 30 + 31 + 1; // Jan(31) + Feb(28/29) + Mar(31) + Apr(30) + May(31) + Jun(30) + Jul(31) + Aug(31) + Sep(30) + Oct(31) + Nov(1) for Nov 1
     int nov1_dow = (jan1_dow + (nov1_doy - 1)) % 7;
     
     // Days from November 1 until first Sunday
