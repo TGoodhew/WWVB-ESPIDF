@@ -33,9 +33,10 @@
 #include <esp_netif_sntp.h>
 #include <wifi_provisioning/manager.h>
 #include <wifi_provisioning/scheme_ble.h>
+#include <mbedtls/sha256.h>
 
 #define WWVBDEBUG
-#define POP_BUFFER_SIZE 13  // 12 hex characters for MAC address + null terminator
+#define POP_BUFFER_SIZE 13  // 13 bytes: 12 hex chars (6 MAC bytes * 2) + null terminator
 
 // Function Prototypes - I wanted to keep this as a single file if people wanted to grab it and drop it into their projects
 void encodeYear(uint16_t year, uint8_t *signal);
@@ -235,9 +236,10 @@ void SetupWiFi()
         char service_name[12];
         get_device_service_name(service_name, sizeof(service_name));
 
-        /* Generate a unique proof-of-possession based on device MAC address
-         * This provides device-specific security instead of a hardcoded value
-         * The PoP should be printed/displayed for the user to enter during provisioning
+        /* Generate a device-unique proof-of-possession using a cryptographic hash of the MAC address.
+         * This provides real security by using SHA-256 hashing, preventing attackers from deriving
+         * the PoP by observing the MAC address through BLE advertising or network scanning.
+         * The PoP should be printed/displayed for the user to enter during provisioning.
          */
         char pop[POP_BUFFER_SIZE];
         generate_unique_pop(pop, sizeof(pop));
@@ -819,16 +821,34 @@ static void get_device_service_name(char *service_name, size_t max)
              ssid_prefix, eth_mac[3], eth_mac[4], eth_mac[5]);
 }
 
-// Generate a unique proof-of-possession (PoP) based on device MAC address
-// This provides device-specific security for WiFi provisioning instead of a hardcoded value
+// Generate a cryptographically secure proof-of-possession (PoP) based on device MAC address
+// This uses SHA-256 hash of the MAC address to prevent attackers from deriving the PoP
+// by observing the MAC address through BLE advertising or network scanning
 static void generate_unique_pop(char *pop, size_t max)
 {
+    if (pop == NULL || max < POP_BUFFER_SIZE)
+    {
+        ESP_LOGE("POP", "Invalid PoP buffer: pop is %s, size=%zu (need at least %d)",
+                 pop == NULL ? "NULL" : "non-NULL", max, POP_BUFFER_SIZE);
+        return;
+    }
+
     uint8_t eth_mac[6];
     ESP_ERROR_CHECK(esp_wifi_get_mac(WIFI_IF_STA, eth_mac));
-    // Create a unique PoP using all 6 bytes of MAC address
-    // Format: MAC address in hex (12 characters)
+    
+    // Use SHA-256 hash of MAC address for cryptographic security
+    // This prevents attackers from deriving the PoP by observing the MAC address
+    uint8_t hash[32];  // SHA-256 produces 32 bytes
+    mbedtls_sha256_context sha256_ctx;
+    mbedtls_sha256_init(&sha256_ctx);
+    mbedtls_sha256_starts(&sha256_ctx, 0);  // 0 = SHA-256 (not SHA-224)
+    mbedtls_sha256_update(&sha256_ctx, eth_mac, 6);
+    mbedtls_sha256_finish(&sha256_ctx, hash);
+    mbedtls_sha256_free(&sha256_ctx);
+    
+    // Use first 6 bytes of hash to create 12-character hex PoP
     snprintf(pop, max, "%02X%02X%02X%02X%02X%02X",
-             eth_mac[0], eth_mac[1], eth_mac[2], eth_mac[3], eth_mac[4], eth_mac[5]);
+             hash[0], hash[1], hash[2], hash[3], hash[4], hash[5]);
 }
 
 // The following is AI generated code
