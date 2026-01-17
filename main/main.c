@@ -18,6 +18,7 @@
 */
 
 #include <stdio.h>
+#include <string.h>
 #include <inttypes.h>
 #include "sdkconfig.h"
 #include <freertos/FreeRTOS.h>
@@ -88,19 +89,23 @@ void debug_task(void *pvParameters);
 // WWVB related
 static const char *ntpServer = CONFIG_WWVB_NTP_SERVER;
 
-// WWVB state structure with double-buffering
+// WWVB state structure with double-buffering using pointer swapping
 // We use two arrays: one active (being transmitted) and one staging (being prepared)
 // This ensures the ISR always reads a complete, consistent 60-second frame
 typedef struct {
-    uint8_t active[60];   // Array being transmitted by ISR
-    uint8_t staging[60];  // Array being prepared for next minute
+    uint8_t buffer0[60];  // First buffer
+    uint8_t buffer1[60];  // Second buffer
+    uint8_t *active;      // Pointer to array being transmitted by ISR
+    uint8_t *staging;     // Pointer to array being prepared for next minute
     volatile uint8_t slot;
     volatile bool swap_pending;  // Flag to indicate staging array is ready to become active
 } wwvb_state_t;
 
 static wwvb_state_t wwvb_state = {
-    .active = {0},
-    .staging = {0},
+    .buffer0 = {0},
+    .buffer1 = {0},
+    .active = NULL,   // Will be initialized in app_main
+    .staging = NULL,  // Will be initialized in app_main
     .slot = 0,
     .swap_pending = false
 };
@@ -202,14 +207,14 @@ void app_main(void)
 
     ESP_LOGI("SNTP", "Initializing WWVBArray");
 
+    // Initialize the pointers to the two buffers
+    wwvb_state.active = wwvb_state.buffer0;
+    wwvb_state.staging = wwvb_state.buffer1;
+    
     SetupWWVBArray();
     
-    // Initialize the active array with the staging array content
-    // This ensures we have valid data to transmit when the timer starts
-    for (int i = 0; i < 60; i++)
-    {
-        wwvb_state.active[i] = wwvb_state.staging[i];
-    }
+    // Copy staging to active for initial data before timer starts
+    memcpy(wwvb_state.active, wwvb_state.staging, 60);
     wwvb_state.swap_pending = false; // Reset flag after manual copy
 
     ESP_LOGI("SNTP", "Initializing Timers");
@@ -569,15 +574,15 @@ void TimerSecond_ISR(void *param)
   // Remove ESP_ERROR_CHECK - just call the function directly
   gpio_set_level((gpio_num_t)CONFIG_WWVB_DEBUG_LED_PIN, ON);
 
-  // At the start of a new minute (slot 0), swap the arrays if a swap is pending
+  // At the start of a new minute (slot 0), swap the pointers if a swap is pending
   // This ensures we always transmit a complete, consistent 60-second frame
+  // Pointer swapping is much faster than copying 60 bytes in ISR context
   if (wwvb_state.slot == 0 && wwvb_state.swap_pending)
   {
-      // Copy staging array to active array
-      for (int i = 0; i < 60; i++)
-      {
-          wwvb_state.active[i] = wwvb_state.staging[i];
-      }
+      // Swap pointers: staging becomes active, old active becomes staging
+      uint8_t *temp = wwvb_state.active;
+      wwvb_state.active = wwvb_state.staging;
+      wwvb_state.staging = temp;
       wwvb_state.swap_pending = false;
   }
 
