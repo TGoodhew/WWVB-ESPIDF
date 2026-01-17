@@ -432,6 +432,15 @@ CONFIG_PARTITION_TABLE_MD5=y
 # end of Partition Table
 
 #
+# WWVB Configuration
+#
+CONFIG_WWVB_OUTPUT_PIN=26
+CONFIG_WWVB_DEBUG_LED_PIN=13
+CONFIG_WWVB_NTP_SERVER="pool.ntp.org"
+CONFIG_WIFI_MAX_RETRY=10
+# end of WWVB Configuration
+
+#
 # Compiler options
 #
 CONFIG_COMPILER_OPTIMIZATION_DEBUG=y
