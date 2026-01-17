@@ -725,6 +725,12 @@ void setLeapYear(uint16_t year, uint8_t *signal)
         ESP_LOGE("WWVB", "setLeapYear: signal pointer is NULL");
         return;
     }
+    
+    if (year < 2000 || year > 2099)
+    {
+        ESP_LOGE("WWVB", "setLeapYear: year %d is out of valid range (2000-2099)", year);
+        return;
+    }
 
     struct tm time_in = {0};
     time_in.tm_year = year - 1900;
