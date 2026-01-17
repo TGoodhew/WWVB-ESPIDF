@@ -1,25 +1,26 @@
 {
-	"name": "ESP-IDF QEMU",
-	"build": {
-		"dockerfile": "Dockerfile",
-		"args": {
-            "DOCKER_TAG": "v5.5.2" 
-        }
-	},
-	"customizations": {
-		"vscode": {
-			"settings": {
-				"terminal.integrated.defaultProfile.linux": "bash",
-				"idf.espIdfPath": "/opt/esp/idf",
-				"idf.toolsPath": "/opt/esp",
-				"idf.gitPath": "/usr/bin/git",
-				"idf.pythonBinPath": "/opt/esp/python_env/idf5.5_py3.12_env/bin/python"
-			},
-			"extensions": [
-				"espressif.esp-idf-extension",
-				"espressif.esp-idf-web"
-			]
-		}
-	},
-	"runArgs": ["--privileged"]
+  "name": "ESP-IDF QEMU",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "args": {
+      "DOCKER_TAG": "v5.5.2"
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "idf.espIdfPath": "/opt/esp/idf",
+        "idf.toolsPath": "/opt/esp",
+        "idf.gitPath": "/usr/bin/git",
+        "idf.pythonBinPath": "/opt/esp/python_env/idf5.5_py3.12_env/bin/python"
+      },
+      "extensions": [
+        "espressif.esp-idf-extension",
+        "espressif.esp-idf-web"
+      ]
+    }
+  },
+
+  "runArgs": []
 }
