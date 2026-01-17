@@ -841,9 +841,25 @@ static void generate_unique_pop(char *pop, size_t max)
     uint8_t hash[32];  // SHA-256 produces 32 bytes
     mbedtls_sha256_context sha256_ctx;
     mbedtls_sha256_init(&sha256_ctx);
-    mbedtls_sha256_starts(&sha256_ctx, 0);  // 0 = SHA-256 (not SHA-224)
+    
+    int ret = mbedtls_sha256_starts(&sha256_ctx, 0);  // 0 = SHA-256 (not SHA-224)
+    if (ret != 0)
+    {
+        ESP_LOGE("POP", "SHA-256 start failed: %d", ret);
+        mbedtls_sha256_free(&sha256_ctx);
+        return;
+    }
+    
     mbedtls_sha256_update(&sha256_ctx, eth_mac, 6);
-    mbedtls_sha256_finish(&sha256_ctx, hash);
+    
+    ret = mbedtls_sha256_finish(&sha256_ctx, hash);
+    if (ret != 0)
+    {
+        ESP_LOGE("POP", "SHA-256 finish failed: %d", ret);
+        mbedtls_sha256_free(&sha256_ctx);
+        return;
+    }
+    
     mbedtls_sha256_free(&sha256_ctx);
     
     // Use first 6 bytes of hash to create 12-character hex PoP
