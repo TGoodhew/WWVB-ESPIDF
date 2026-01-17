@@ -51,7 +51,7 @@ void setDST(bool IsDST, uint8_t *signal);
 uint16_t BitsEncoder(uint16_t n);
 void TimerSignalReenable_ISR();
 void ZeroCarrier();
-void TimerSecond_ISR();
+void TimerSecond_ISR(void *param);
 void BoardDebugTest();
 void SetupWiFi();
 void SetupSNTP();
