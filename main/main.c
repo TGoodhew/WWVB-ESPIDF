@@ -970,7 +970,12 @@ void calculateDSTDays(int year, int *startDay, int *endDay)
     int y = year - 1;
     int m = 13; // January as month 13 of previous year
     int q = 1;  // day of month (January 1)
-    int h = (q + ((13 * (m + 1)) / 5) + (y % 100) + ((y % 100) / 4) + ((y / 100) / 4) + 5 * (y / 100)) % 7;
+    
+    // Apply Zeller's congruence formula
+    int century = y / 100;
+    int year_of_century = y % 100;
+    int h = (q + ((13 * (m + 1)) / 5) + year_of_century + (year_of_century / 4) + (century / 4) + 5 * century) % 7;
+    
     // Zeller's result: h: 0=Saturday, 1=Sunday, 2=Monday, ..., 6=Friday
     // Convert to standard: 0=Sunday, 1=Monday, ..., 6=Saturday
     int jan1_dow = (h + 6) % 7;
