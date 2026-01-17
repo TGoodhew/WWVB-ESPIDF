@@ -88,15 +88,21 @@ void debug_task(void *pvParameters);
 // WWVB related
 static const char *ntpServer = CONFIG_WWVB_NTP_SERVER;
 
-// WWVB state structure
+// WWVB state structure with double-buffering
+// We use two arrays: one active (being transmitted) and one staging (being prepared)
+// This ensures the ISR always reads a complete, consistent 60-second frame
 typedef struct {
-    uint8_t array[60];
+    uint8_t active[60];   // Array being transmitted by ISR
+    uint8_t staging[60];  // Array being prepared for next minute
     volatile uint8_t slot;
+    volatile bool swap_pending;  // Flag to indicate staging array is ready to become active
 } wwvb_state_t;
 
 static wwvb_state_t wwvb_state = {
-    .array = {0},
-    .slot = 0
+    .active = {0},
+    .staging = {0},
+    .slot = 0,
+    .swap_pending = false
 };
 
 // Flag for signaling WWVB array updates from ISR to task
@@ -197,6 +203,14 @@ void app_main(void)
     ESP_LOGI("SNTP", "Initializing WWVBArray");
 
     SetupWWVBArray();
+    
+    // Initialize the active array with the staging array content
+    // This ensures we have valid data to transmit when the timer starts
+    for (int i = 0; i < 60; i++)
+    {
+        wwvb_state.active[i] = wwvb_state.staging[i];
+    }
+    wwvb_state.swap_pending = false; // Reset flag after manual copy
 
     ESP_LOGI("SNTP", "Initializing Timers");
 
@@ -494,16 +508,20 @@ void SetupWWVBArray()
         return;
     }
 
-    // Using the current UTC time fill in the WWVBArray
-    encodeYear(utcTime->tm_year + 1900, wwvb_state.array);
-    encodeDayOfYear(utcTime->tm_yday + 1, wwvb_state.array);
-    encodeHour(utcTime->tm_hour, wwvb_state.array);
-    encodeMinute(utcTime->tm_min, wwvb_state.array);
-    setMarkersAndIndicators(wwvb_state.array);
-    setDUT1(wwvb_state.array); // We're ignoring DUT1 as it has been deprecated and not used in this scenario
-    setLeapYear(utcTime->tm_year + 1900, wwvb_state.array);
-    setLeapSecond(false, wwvb_state.array); // Ignore leap seconds in this scenario
-    setDST(isDaylightSavingTime(utcTime->tm_year + 1900, utcTime->tm_yday + 1), wwvb_state.array);
+    // Write to the staging array (not the active array being transmitted)
+    // The staging array will become active at the next minute boundary
+    encodeYear(utcTime->tm_year + 1900, wwvb_state.staging);
+    encodeDayOfYear(utcTime->tm_yday + 1, wwvb_state.staging);
+    encodeHour(utcTime->tm_hour, wwvb_state.staging);
+    encodeMinute(utcTime->tm_min, wwvb_state.staging);
+    setMarkersAndIndicators(wwvb_state.staging);
+    setDUT1(wwvb_state.staging); // We're ignoring DUT1 as it has been deprecated and not used in this scenario
+    setLeapYear(utcTime->tm_year + 1900, wwvb_state.staging);
+    setLeapSecond(false, wwvb_state.staging); // Ignore leap seconds in this scenario
+    setDST(isDaylightSavingTime(utcTime->tm_year + 1900, utcTime->tm_yday + 1), wwvb_state.staging);
+    
+    // Signal that the staging array is ready to be swapped at the next minute boundary
+    wwvb_state.swap_pending = true;
 }
 
 void SetupTimers()
@@ -551,13 +569,26 @@ void TimerSecond_ISR(void *param)
   // Remove ESP_ERROR_CHECK - just call the function directly
   gpio_set_level((gpio_num_t)CONFIG_WWVB_DEBUG_LED_PIN, ON);
 
-  // Validate slot index before accessing WWVBArray
+  // At the start of a new minute (slot 0), swap the arrays if a swap is pending
+  // This ensures we always transmit a complete, consistent 60-second frame
+  if (wwvb_state.slot == 0 && wwvb_state.swap_pending)
+  {
+      // Copy staging array to active array
+      for (int i = 0; i < 60; i++)
+      {
+          wwvb_state.active[i] = wwvb_state.staging[i];
+      }
+      wwvb_state.swap_pending = false;
+  }
+
+  // Validate slot index before accessing active array
   if (wwvb_state.slot >= 60)
   {
       wwvb_state.slot = 0;
   }
 
-  switch (wwvb_state.array[wwvb_state.slot])
+  // Always read from the active array (never from staging)
+  switch (wwvb_state.active[wwvb_state.slot])
   {
   case 0:
   {
