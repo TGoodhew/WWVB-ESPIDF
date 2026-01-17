@@ -463,6 +463,10 @@ void TimerSecond_ISR(void *param)
       {
           ESP_ERROR_CHECK(esp_timer_start_once(TimerBit0, 200000)); // 0.2 second
       }
+      else
+      {
+          ESP_LOGE("Timer", "TimerBit0 is NULL, cannot start timer");
+      }
     }
   break;
   case 1:
@@ -478,6 +482,10 @@ void TimerSecond_ISR(void *param)
       if (TimerBit1 != NULL)
       {
           ESP_ERROR_CHECK(esp_timer_start_once(TimerBit1, 500000)); // 0.5 second
+      }
+      else
+      {
+          ESP_LOGE("Timer", "TimerBit1 is NULL, cannot start timer");
       }
 
   }
@@ -495,6 +503,10 @@ void TimerSecond_ISR(void *param)
       if (TimerBitMarker != NULL)
       {
           ESP_ERROR_CHECK(esp_timer_start_once(TimerBitMarker, 800000)); // 0.8 second
+      }
+      else
+      {
+          ESP_LOGE("Timer", "TimerBitMarker is NULL, cannot start timer");
       }
   }
   break;
