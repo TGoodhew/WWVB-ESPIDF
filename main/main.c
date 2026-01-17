@@ -517,6 +517,7 @@ void IRAM_ATTR TimerSignalReenable_ISR()
 
 void TimerSecond_ISR(void *param)
 {
+  (void)param;  // Unused parameter
   static bool ON;
   ON = !ON;
   
