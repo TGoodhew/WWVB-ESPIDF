@@ -99,6 +99,9 @@ static wwvb_state_t wwvb_state = {
     .slot = 0
 };
 
+// Flag for signaling WWVB array updates from ISR to task
+static volatile bool update_wwvb_array = false;
+
 // Debug queue for ISR to task communication
 #define DEBUG_QUEUE_SIZE 10
 typedef struct {
@@ -623,6 +626,7 @@ void TimerSecond_ISR(void *param)
   if (wwvb_state.slot == 60)
   {
       wwvb_state.slot = 0; // Reset slot to 0 if at 60 seconds
+      update_wwvb_array = true; // Signal that array needs updating
       #ifdef WWVBDEBUG
       // Defer debug output and logging to task context via queue
       if (debug_queue != NULL) {
@@ -631,7 +635,7 @@ void TimerSecond_ISR(void *param)
       }
       #endif
   }
-  else if (slot == 30)
+  else if (wwvb_state.slot == 30)
   {
       // Update at 30 seconds as well to ensure at least 2 updates per minute
       update_wwvb_array = true;
