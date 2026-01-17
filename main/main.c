@@ -35,6 +35,7 @@
 #include <wifi_provisioning/scheme_ble.h>
 
 #define WWVBDEBUG
+#define POP_BUFFER_SIZE 13  // 12 hex characters for MAC address + null terminator
 
 // Function Prototypes - I wanted to keep this as a single file if people wanted to grab it and drop it into their projects
 void encodeYear(uint16_t year, uint8_t *signal);
@@ -238,7 +239,7 @@ void SetupWiFi()
          * This provides device-specific security instead of a hardcoded value
          * The PoP should be printed/displayed for the user to enter during provisioning
          */
-        char pop[13]; // 12 characters for MAC address + null terminator
+        char pop[POP_BUFFER_SIZE];
         generate_unique_pop(pop, sizeof(pop));
         
         // Log the PoP so the user knows what to enter during provisioning
