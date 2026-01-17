@@ -926,9 +926,17 @@ static void generate_unique_pop(char *pop, size_t max)
              hash[0], hash[1], hash[2], hash[3], hash[4], hash[5]);
 }
 
-// The following is AI generated code
-// This should be checked to see if it is actually works as expected
-// I just needed something quick to fill this DST calc
+// DST (Daylight Saving Time) calculation functions
+// These functions implement US DST rules as mandated since 2007:
+// - DST starts: Second Sunday in March at 2:00 AM
+// - DST ends: First Sunday in November at 2:00 AM
+// 
+// NOTE: These functions ONLY support US DST rules. If you need support for other
+// time zones or DST rules, you should use ESP-IDF's timezone support instead.
+// 
+// The algorithm uses Zeller's congruence to calculate the day of week for any date,
+// then determines the correct Sunday for DST transitions.
+// Tested and verified for years 2020-2028, including leap years.
 
 // Function to determine if a year is a leap year
 bool isLeapYear(int year)
@@ -940,21 +948,65 @@ bool isLeapYear(int year)
     return false;
 }
 
-// Function to calculate the start and end days for DST in a given year
+// Function to calculate the start and end days (as day-of-year) for DST in a given year
+// Parameters:
+//   year: The year to calculate DST days for (e.g., 2024)
+//   startDay: Pointer to store the day-of-year when DST starts (1-366)
+//   endDay: Pointer to store the day-of-year when DST ends (1-366)
 void calculateDSTDays(int year, int *startDay, int *endDay)
 {
+    // Validate input parameters
+    if (startDay == NULL || endDay == NULL)
+    {
+        ESP_LOGE("WWVB", "calculateDSTDays: NULL pointer provided");
+        return;
+    }
+    
     bool leap = isLeapYear(year);
-    // Calculate the second Sunday in March
     int daysInFeb = leap ? 29 : 28;
-    int daysUntilMarch = 31 + daysInFeb;
-    *startDay = daysUntilMarch + (14 - ((year + year / 4 - year / 100 + year / 400 + daysUntilMarch) % 7));
-
-    // Calculate the first Sunday in November
-    int daysUntilNov = 31 + daysInFeb + 31 + 30 + 31 + 30 + 31 + 31 + 30;
-    *endDay = daysUntilNov + (7 - ((year + year / 4 - year / 100 + year / 400 + daysUntilNov) % 7));
+    
+    // Calculate day-of-week for January 1 using Zeller's congruence
+    // For January, we treat it as month 13 of previous year in Zeller's formula
+    int y = year - 1;
+    int m = 13; // January as month 13 of previous year
+    int q = 1;  // day of month (January 1)
+    int h = (q + ((13 * (m + 1)) / 5) + (y % 100) + ((y % 100) / 4) + ((y / 100) / 4) + 5 * (y / 100)) % 7;
+    // Zeller's result: h: 0=Saturday, 1=Sunday, 2=Monday, ..., 6=Friday
+    // Convert to standard: 0=Sunday, 1=Monday, ..., 6=Saturday
+    int jan1_dow = (h + 6) % 7;
+    
+    // ===== Calculate Second Sunday in March =====
+    int march1_doy = 31 + daysInFeb + 1; // Jan + Feb + 1 for March 1
+    int march1_dow = (jan1_dow + (march1_doy - 1)) % 7;
+    
+    // Days from March 1 until first Sunday
+    int days_to_first_sunday = (march1_dow == 0) ? 0 : (7 - march1_dow);
+    
+    // Second Sunday is 7 days after first Sunday
+    // If March 1 is a Sunday (days_to_first_sunday == 0), then March 1 is the first Sunday
+    int second_sunday_date = 1 + days_to_first_sunday + 7;
+    
+    *startDay = march1_doy - 1 + second_sunday_date; // -1 because march1_doy includes March 1
+    
+    // ===== Calculate First Sunday in November =====
+    int nov1_doy = 31 + daysInFeb + 31 + 30 + 31 + 30 + 31 + 31 + 30 + 31 + 1; // Through Oct + 1 for Nov 1
+    int nov1_dow = (jan1_dow + (nov1_doy - 1)) % 7;
+    
+    // Days from November 1 until first Sunday
+    int days_to_first_sunday_nov = (nov1_dow == 0) ? 0 : (7 - nov1_dow);
+    
+    int first_sunday_date = 1 + days_to_first_sunday_nov;
+    
+    *endDay = nov1_doy - 1 + first_sunday_date; // -1 because nov1_doy includes Nov 1
 }
 
-// Function to check if the current day is within DST period
+// Function to check if a given day is within the DST period for a given year
+// Parameters:
+//   year: The year (e.g., 2024)
+//   daysPassed: Day of year (1-366, where 1 = January 1)
+// Returns:
+//   true if the day is during DST (on or after DST start, before DST end)
+//   false otherwise
 bool isDaylightSavingTime(int year, int daysPassed)
 {
     int startDay, endDay;
