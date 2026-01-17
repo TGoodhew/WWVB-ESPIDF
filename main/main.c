@@ -179,7 +179,6 @@ void app_main(void)
         // Check if the ISR signaled that we need to update the array
         if (update_wwvb_array)
         {
-            // Clear flag first to avoid missing updates
             update_wwvb_array = false;
             SetupWWVBArray();
         }
