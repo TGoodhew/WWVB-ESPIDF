@@ -274,7 +274,7 @@ void SNTP_callback (struct timeval *tv)
         return;
     }
     
-    ESP_ERROR_CHECK(esp_timer_start_periodic(TimerSecond, TIMER_ONE_SECOND_US)); // 1 second
+    ESP_ERROR_CHECK(esp_timer_start_periodic(timers.second, TIMER_ONE_SECOND_US)); // 1 second
 }
 
 void SetupWiFi()
@@ -565,7 +565,7 @@ void TimerSecond_ISR(void *param)
       // TimerBit0 - Start timer without ESP_ERROR_CHECK
       if (timers.bit0 != NULL)
       {
-          esp_timer_start_once(TimerBit0, TIMER_BIT0_DURATION_US); // 0.2 second
+          esp_timer_start_once(timers.bit0, TIMER_BIT0_DURATION_US); // 0.2 second
       }
     }
   break;
@@ -585,7 +585,7 @@ void TimerSecond_ISR(void *param)
       // TimerBit1 - Start timer without ESP_ERROR_CHECK
       if (timers.bit1 != NULL)
       {
-          esp_timer_start_once(TimerBit1, TIMER_BIT1_DURATION_US); // 0.5 second
+          esp_timer_start_once(timers.bit1, TIMER_BIT1_DURATION_US); // 0.5 second
       }
 
   }
@@ -606,7 +606,7 @@ void TimerSecond_ISR(void *param)
       // TimerBitMarker - Start timer without ESP_ERROR_CHECK
       if (timers.marker != NULL)
       {
-          esp_timer_start_once(TimerBitMarker, TIMER_MARKER_DURATION_US); // 0.8 second
+          esp_timer_start_once(timers.marker, TIMER_MARKER_DURATION_US); // 0.8 second
       }
   }
   break;
