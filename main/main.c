@@ -66,11 +66,19 @@ static void get_device_service_name(char *service_name, size_t max);
 static void generate_unique_pop(char *pop, size_t max);
 void Setup60KHzOutput();
 void SNTP_callback (struct timeval *tv);
+void debug_task(void *pvParameters);
 
 // WWVB related
 const char *ntpServer = "pool.ntp.org";
 uint8_t WWVBArray[60] = {0};
 volatile uint8_t slot = 0;
+
+// Debug queue for ISR to task communication
+#define DEBUG_QUEUE_SIZE 10
+typedef struct {
+    char type;  // '0', '1', 'M', or 'N' for newline/time log
+} debug_msg_t;
+QueueHandle_t debug_queue = NULL;
 
 // WiFi Provisioning
 bool is_provisioned = false;
@@ -89,6 +97,27 @@ esp_timer_handle_t TimerSecond = NULL;
 
 // 60KHz output
 ledc_channel_config_t ledc_channel;
+
+// Debug task to handle logging from ISR context
+void debug_task(void *pvParameters)
+{
+    debug_msg_t msg;
+    
+    while (1) {
+        if (xQueueReceive(debug_queue, &msg, portMAX_DELAY) == pdTRUE) {
+            #ifdef WWVBDEBUG
+            if (msg.type == 'N') {
+                // Newline and time log
+                printf("\n");
+                LogCurrentTime();
+            } else {
+                // Print the character
+                printf("%c", msg.type);
+            }
+            #endif
+        }
+    }
+}
 
 void app_main(void)
 {
@@ -131,6 +160,18 @@ void app_main(void)
     ESP_LOGI("SNTP", "Initializing Signal Output");
 
     Setup60KHzOutput();
+
+    // Create debug queue for ISR to task communication
+    debug_queue = xQueueCreate(DEBUG_QUEUE_SIZE, sizeof(debug_msg_t));
+    if (debug_queue == NULL) {
+        ESP_LOGE("Main", "Failed to create debug queue");
+    } else {
+        // Create debug task to handle logging from ISR
+        BaseType_t task_created = xTaskCreate(debug_task, "debug_task", 2048, NULL, 5, NULL);
+        if (task_created != pdPASS) {
+            ESP_LOGE("Main", "Failed to create debug task");
+        }
+    }
 
     while (1)
     {
@@ -443,9 +484,10 @@ void SetupTimers()
 // All the bit/marker timers just reenable the 50%^ duty cycle of the 60KHz signal
 void IRAM_ATTR TimerSignalReenable_ISR()
 {
-    //analogWrite(A0, 127);
-    ESP_ERROR_CHECK(ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, 127));
-    ESP_ERROR_CHECK(ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel));
+    // Remove ESP_ERROR_CHECK - just call the functions directly
+    // Errors in ISR context cannot be safely handled
+    ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, 127);
+    ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
 }
 
 void TimerSecond_ISR(void *param)
@@ -453,12 +495,12 @@ void TimerSecond_ISR(void *param)
   static bool ON;
   ON = !ON;
   
-  ESP_ERROR_CHECK(gpio_set_level(GPIO_NUM_13, ON));
+  // Remove ESP_ERROR_CHECK - just call the function directly
+  gpio_set_level(GPIO_NUM_13, ON);
 
   // Validate slot index before accessing WWVBArray
   if (slot >= 60)
   {
-      ESP_LOGE("Timer", "slot %d is out of bounds (0-59), resetting to 0", slot);
       slot = 0;
   }
 
@@ -467,40 +509,40 @@ void TimerSecond_ISR(void *param)
   case 0:
   {
       #ifdef WWVBDEBUG
-      printf("0");
+      // Defer debug output to task context via queue
+      if (debug_queue != NULL) {
+          debug_msg_t msg = {.type = '0'};
+          xQueueSendFromISR(debug_queue, &msg, NULL);
+      }
       #endif
 
       // 0 (0.2s reduced power)
       ZeroCarrier();
 
-      // TimerBit0 - Validate handle before starting
+      // TimerBit0 - Start timer without ESP_ERROR_CHECK
       if (TimerBit0 != NULL)
       {
-          ESP_ERROR_CHECK(esp_timer_start_once(TimerBit0, 200000)); // 0.2 second
-      }
-      else
-      {
-          ESP_LOGE("Timer", "TimerBit0 is NULL, cannot start timer");
+          esp_timer_start_once(TimerBit0, 200000); // 0.2 second
       }
     }
   break;
   case 1:
   {
       #ifdef WWVBDEBUG
-      printf("1");
+      // Defer debug output to task context via queue
+      if (debug_queue != NULL) {
+          debug_msg_t msg = {.type = '1'};
+          xQueueSendFromISR(debug_queue, &msg, NULL);
+      }
       #endif
 
       // 1 (0.5s reduced power)
       ZeroCarrier();
 
-      // TimerBit1 - Validate handle before starting
+      // TimerBit1 - Start timer without ESP_ERROR_CHECK
       if (TimerBit1 != NULL)
       {
-          ESP_ERROR_CHECK(esp_timer_start_once(TimerBit1, 500000)); // 0.5 second
-      }
-      else
-      {
-          ESP_LOGE("Timer", "TimerBit1 is NULL, cannot start timer");
+          esp_timer_start_once(TimerBit1, 500000); // 0.5 second
       }
 
   }
@@ -508,20 +550,20 @@ void TimerSecond_ISR(void *param)
   case 2:
   {
       #ifdef WWVBDEBUG
-      printf("M");
+      // Defer debug output to task context via queue
+      if (debug_queue != NULL) {
+          debug_msg_t msg = {.type = 'M'};
+          xQueueSendFromISR(debug_queue, &msg, NULL);
+      }
       #endif
 
       // Marker (0.8s reduced power)
       ZeroCarrier();
 
-      // TimerBitMarker - Validate handle before starting
+      // TimerBitMarker - Start timer without ESP_ERROR_CHECK
       if (TimerBitMarker != NULL)
       {
-          ESP_ERROR_CHECK(esp_timer_start_once(TimerBitMarker, 800000)); // 0.8 second
-      }
-      else
-      {
-          ESP_LOGE("Timer", "TimerBitMarker is NULL, cannot start timer");
+          esp_timer_start_once(TimerBitMarker, 800000); // 0.8 second
       }
   }
   break;
@@ -532,16 +574,20 @@ void TimerSecond_ISR(void *param)
   {
       slot = 0; // Reset slot to 0 if at 60 seconds
       #ifdef WWVBDEBUG
-      printf("\n");
-      LogCurrentTime();
+      // Defer debug output and logging to task context via queue
+      if (debug_queue != NULL) {
+          debug_msg_t msg = {.type = 'N'};
+          xQueueSendFromISR(debug_queue, &msg, NULL);
+      }
       #endif
   }
 }
 
 void ZeroCarrier()
 {
-    ESP_ERROR_CHECK(ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, 0));
-    ESP_ERROR_CHECK(ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel));
+    // Remove ESP_ERROR_CHECK - just call the functions directly
+    ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, 0);
+    ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
 }
 
 // This rotuine takes the input value and then breaks it out in the individual BCD pattern that the WWVB format expects
