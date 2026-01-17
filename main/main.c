@@ -61,6 +61,7 @@ bool isDaylightSavingTime(int year, int daysPassed);
 void LogCurrentTime();
 static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
 static void get_device_service_name(char *service_name, size_t max);
+static void generate_unique_pop(char *pop, size_t max);
 void Setup60KHzOutput();
 void SNTP_callback (struct timeval *tv);
 
@@ -233,11 +234,15 @@ void SetupWiFi()
         char service_name[12];
         get_device_service_name(service_name, sizeof(service_name));
 
-        /* Do we want a proof-of-possession (ignored if Security 0 is selected):
-         *      - this should be a string with length > 0
-         *      - NULL if not used
+        /* Generate a unique proof-of-possession based on device MAC address
+         * This provides device-specific security instead of a hardcoded value
+         * The PoP should be printed/displayed for the user to enter during provisioning
          */
-        const char *pop = "abcd1234";
+        char pop[13]; // 12 characters for MAC address + null terminator
+        generate_unique_pop(pop, sizeof(pop));
+        
+        // Log the PoP so the user knows what to enter during provisioning
+        ESP_LOGI("WiFi", "Provisioning PoP: %s", pop);
 
         /* This is the structure for passing security parameters
          * for the protocomm security 1.
@@ -811,6 +816,18 @@ static void get_device_service_name(char *service_name, size_t max)
     ESP_ERROR_CHECK(esp_wifi_get_mac(WIFI_IF_STA, eth_mac));
     snprintf(service_name, max, "%s%02X%02X%02X",
              ssid_prefix, eth_mac[3], eth_mac[4], eth_mac[5]);
+}
+
+// Generate a unique proof-of-possession (PoP) based on device MAC address
+// This provides device-specific security for WiFi provisioning instead of a hardcoded value
+static void generate_unique_pop(char *pop, size_t max)
+{
+    uint8_t eth_mac[6];
+    ESP_ERROR_CHECK(esp_wifi_get_mac(WIFI_IF_STA, eth_mac));
+    // Create a unique PoP using all 6 bytes of MAC address
+    // Format: MAC address in hex (12 characters)
+    snprintf(pop, max, "%02X%02X%02X%02X%02X%02X",
+             eth_mac[0], eth_mac[1], eth_mac[2], eth_mac[3], eth_mac[4], eth_mac[5]);
 }
 
 // The following is AI generated code
