@@ -80,6 +80,9 @@ typedef struct {
 } debug_msg_t;
 QueueHandle_t debug_queue = NULL;
 
+// Semaphore for WWVBArray update notification
+SemaphoreHandle_t wwvb_update_semaphore = NULL;
+
 // WiFi Provisioning
 bool is_provisioned = false;
 int s_retry_num = 0;
@@ -97,6 +100,17 @@ esp_timer_handle_t TimerSecond = NULL;
 
 // 60KHz output
 ledc_channel_config_t ledc_channel;
+
+// Task to update WWVB array at minute boundaries
+void wwvb_update_task(void *pvParameters)
+{
+    while (1) {
+        // Wait for semaphore from ISR indicating minute boundary
+        if (xSemaphoreTake(wwvb_update_semaphore, portMAX_DELAY) == pdTRUE) {
+            SetupWWVBArray();
+        }
+    }
+}
 
 // Debug task to handle logging from ISR context
 void debug_task(void *pvParameters)
@@ -161,6 +175,18 @@ void app_main(void)
 
     Setup60KHzOutput();
 
+    // Create semaphore for WWVB array updates
+    wwvb_update_semaphore = xSemaphoreCreateBinary();
+    if (wwvb_update_semaphore == NULL) {
+        ESP_LOGE("Main", "Failed to create WWVB update semaphore");
+    } else {
+        // Create task to handle WWVB array updates at minute boundaries
+        BaseType_t task_created = xTaskCreate(wwvb_update_task, "wwvb_update", 3072, NULL, 6, NULL);
+        if (task_created != pdPASS) {
+            ESP_LOGE("Main", "Failed to create WWVB update task");
+        }
+    }
+
     // Create debug queue for ISR to task communication
     debug_queue = xQueueCreate(DEBUG_QUEUE_SIZE, sizeof(debug_msg_t));
     if (debug_queue == NULL) {
@@ -173,11 +199,11 @@ void app_main(void)
         }
     }
 
-    while (1)
-    {
-        SetupWWVBArray();
-        vTaskDelay(500 / portTICK_PERIOD_MS);
-    }
+    ESP_LOGI("Main", "Initialization complete. WWVBArray will be updated at minute boundaries by TimerSecond_ISR.");
+    
+    // Delete the app_main task to free resources
+    // The system will continue running with the timer ISR and debug task
+    vTaskDelete(NULL);
 }
 
 void SetupSNTP()
@@ -573,6 +599,14 @@ void TimerSecond_ISR(void *param)
   if (slot == 60)
   {
       slot = 0; // Reset slot to 0 if at 60 seconds
+      
+      // Signal the update task to refresh WWVBArray for the new minute
+      if (wwvb_update_semaphore != NULL) {
+          BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+          xSemaphoreGiveFromISR(wwvb_update_semaphore, &xHigherPriorityTaskWoken);
+          portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+      }
+      
       #ifdef WWVBDEBUG
       // Defer debug output and logging to task context via queue
       if (debug_queue != NULL) {
