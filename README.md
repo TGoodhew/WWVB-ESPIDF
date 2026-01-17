@@ -20,7 +20,7 @@ Navigate to "WWVB Configuration" and adjust the settings as needed.
 ## Signal Output
 
 The signal currently looks like this:
-![Scope image showing signal](https://github.com/tgoodhew/WWVB-ESPIDF/blob/main/images/ScopeOutput.png?raw=true)
+![Scope image showing signal](images/ScopeOutput.png)
 
 And is showing up as a nice spike on my spectrum analyzer (direct connection via a 20dB attenuator) - The noise is 70dB down from the peak but I don't have antennas yet so I can yet test OTA values.
-![Spectrum Analyzer image showing a peak at 60KHz](https://github.com/tgoodhew/WWVB-ESPIDF/blob/main/images/SAOutput.png?raw=true)
+![Spectrum Analyzer image showing a peak at 60KHz](images/SAOutput.png)
