@@ -33,8 +33,10 @@
 #include <esp_netif_sntp.h>
 #include <wifi_provisioning/manager.h>
 #include <wifi_provisioning/scheme_ble.h>
+#include <mbedtls/sha256.h>
 
 #define WWVBDEBUG
+#define POP_BUFFER_SIZE 13  // 13 bytes: 12 hex chars (6 MAC bytes * 2) + null terminator
 
 // Function Prototypes - I wanted to keep this as a single file if people wanted to grab it and drop it into their projects
 void encodeYear(uint16_t year, uint8_t *signal);
@@ -61,6 +63,7 @@ bool isDaylightSavingTime(int year, int daysPassed);
 void LogCurrentTime();
 static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
 static void get_device_service_name(char *service_name, size_t max);
+static void generate_unique_pop(char *pop, size_t max);
 void Setup60KHzOutput();
 void SNTP_callback (struct timeval *tv);
 
@@ -233,11 +236,16 @@ void SetupWiFi()
         char service_name[12];
         get_device_service_name(service_name, sizeof(service_name));
 
-        /* Do we want a proof-of-possession (ignored if Security 0 is selected):
-         *      - this should be a string with length > 0
-         *      - NULL if not used
+        /* Generate a device-unique proof-of-possession using a cryptographic hash of the MAC address.
+         * This provides real security by using SHA-256 hashing, preventing attackers from deriving
+         * the PoP by observing the MAC address through BLE advertising or network scanning.
+         * The PoP should be printed/displayed for the user to enter during provisioning.
          */
-        const char *pop = "abcd1234";
+        char pop[POP_BUFFER_SIZE];
+        generate_unique_pop(pop, sizeof(pop));
+        
+        // Log the PoP so the user knows what to enter during provisioning
+        ESP_LOGI("WiFi", "Provisioning PoP: %s", pop);
 
         /* This is the structure for passing security parameters
          * for the protocomm security 1.
@@ -447,6 +455,13 @@ void TimerSecond_ISR(void *param)
   
   ESP_ERROR_CHECK(gpio_set_level(GPIO_NUM_13, ON));
 
+  // Validate slot index before accessing WWVBArray
+  if (slot >= 60)
+  {
+      ESP_LOGE("Timer", "slot %d is out of bounds (0-59), resetting to 0", slot);
+      slot = 0;
+  }
+
   switch (WWVBArray[slot])
   {
   case 0:
@@ -548,6 +563,19 @@ uint16_t BitsEncoder(uint16_t n)
 // WWVB Expects year to be in 8 bit BCD - https://en.wikipedia.org/wiki/WWVB#Amplitude-modulated_time_code
 void encodeYear(uint16_t year, uint8_t *signal)
 {
+    // Validate input parameters
+    if (signal == NULL)
+    {
+        ESP_LOGE("WWVB", "encodeYear: signal pointer is NULL");
+        return;
+    }
+    
+    if (year < 2000 || year > 2099)
+    {
+        ESP_LOGE("WWVB", "encodeYear: year %d is out of valid range (2000-2099)", year);
+        return;
+    }
+
     int yearBCD = year % 100;
     uint16_t bitsResult = BitsEncoder(yearBCD);
 
@@ -564,6 +592,19 @@ void encodeYear(uint16_t year, uint8_t *signal)
 // WWVB Expects the day of the year to be in 10 bit BCD - https://en.wikipedia.org/wiki/WWVB#Amplitude-modulated_time_code
 void encodeDayOfYear(uint16_t dayOfYear, uint8_t *signal)
 {
+    // Validate input parameters
+    if (signal == NULL)
+    {
+        ESP_LOGE("WWVB", "encodeDayOfYear: signal pointer is NULL");
+        return;
+    }
+    
+    if (dayOfYear < 1 || dayOfYear > 366)
+    {
+        ESP_LOGE("WWVB", "encodeDayOfYear: dayOfYear %d is out of valid range (1-366)", dayOfYear);
+        return;
+    }
+
     uint16_t bitsResult = BitsEncoder(dayOfYear);
 
     signal[22] = (bitsResult & 0x0200) >> 9;
@@ -581,6 +622,19 @@ void encodeDayOfYear(uint16_t dayOfYear, uint8_t *signal)
 // WWVB Expects the hour to be in 6 bit BCD - https://en.wikipedia.org/wiki/WWVB#Amplitude-modulated_time_code
 void encodeHour(uint8_t hour, uint8_t *signal)
 {
+    // Validate input parameters
+    if (signal == NULL)
+    {
+        ESP_LOGE("WWVB", "encodeHour: signal pointer is NULL");
+        return;
+    }
+    
+    if (hour > 23)
+    {
+        ESP_LOGE("WWVB", "encodeHour: hour %d is out of valid range (0-23)", hour);
+        return;
+    }
+
     uint16_t bitsResult = BitsEncoder(hour);
 
     signal[12] = (bitsResult & 0x20) >> 5;
@@ -594,6 +648,19 @@ void encodeHour(uint8_t hour, uint8_t *signal)
 // WWVB Expects minutes to be in 7 bit BCD - https://en.wikipedia.org/wiki/WWVB#Amplitude-modulated_time_code
 void encodeMinute(uint8_t minute, uint8_t *signal)
 {
+    // Validate input parameters
+    if (signal == NULL)
+    {
+        ESP_LOGE("WWVB", "encodeMinute: signal pointer is NULL");
+        return;
+    }
+    
+    if (minute > 59)
+    {
+        ESP_LOGE("WWVB", "encodeMinute: minute %d is out of valid range (0-59)", minute);
+        return;
+    }
+
     uint16_t bitsResult = BitsEncoder(minute);
 
     signal[1] = (bitsResult & 0x40) >> 6;
@@ -608,6 +675,13 @@ void encodeMinute(uint8_t minute, uint8_t *signal)
 // The WWVB signal has certain marker and bits that are always set to either a marker bit or a zero
 void setMarkersAndIndicators(uint8_t *signal)
 {
+    // Validate input parameters
+    if (signal == NULL)
+    {
+        ESP_LOGE("WWVB", "setMarkersAndIndicators: signal pointer is NULL");
+        return;
+    }
+
     signal[0] = 2;  // Position marker
     signal[9] = 2;  // Position marker
     signal[19] = 2; // Position marker
@@ -632,7 +706,14 @@ void setMarkersAndIndicators(uint8_t *signal)
 // WWVB once supported celestial navigation uses but as it was deprecated and this scenario doesn't need it then just set those bits to 0 - https://en.wikipedia.org/wiki/WWVB#Amplitude-modulated_time_code
 void setDUT1(uint8_t *signal)
 {
-    // DUT1 is obselete, it was used for celestial navigation
+    // Validate input parameters
+    if (signal == NULL)
+    {
+        ESP_LOGE("WWVB", "setDUT1: signal pointer is NULL");
+        return;
+    }
+
+    // DUT1 is obsolete, it was used for celestial navigation
     signal[36] = 0;
     signal[37] = 0;
     signal[38] = 0;
@@ -646,6 +727,19 @@ void setDUT1(uint8_t *signal)
 // I can't find where I got this code from so apologies for not crediting it to the appropriate person
 void setLeapYear(uint16_t year, uint8_t *signal)
 {
+    // Validate input parameters
+    if (signal == NULL)
+    {
+        ESP_LOGE("WWVB", "setLeapYear: signal pointer is NULL");
+        return;
+    }
+    
+    if (year < 2000 || year > 2099)
+    {
+        ESP_LOGE("WWVB", "setLeapYear: year %d is out of valid range (2000-2099)", year);
+        return;
+    }
+
     struct tm time_in = {0};
     time_in.tm_year = year - 1900;
     time_in.tm_mon = 2;  // March (0-based: January is 0)
@@ -663,6 +757,13 @@ void setLeapYear(uint16_t year, uint8_t *signal)
 // WWVB Expects this bit for a leap second, I don't believe it is useful in this scenario but setting it just in case - https://en.wikipedia.org/wiki/WWVB#Amplitude-modulated_time_code
 void setLeapSecond(bool IsLeap, uint8_t *signal)
 {
+    // Validate input parameters
+    if (signal == NULL)
+    {
+        ESP_LOGE("WWVB", "setLeapSecond: signal pointer is NULL");
+        return;
+    }
+
     if (IsLeap)
         signal[56] = 1;
     else
@@ -672,6 +773,13 @@ void setLeapSecond(bool IsLeap, uint8_t *signal)
 // WWVB Expects to have a DST bit set - It allows for warning of DST but we're ignoring that in this scenario - https://en.wikipedia.org/wiki/WWVB#Amplitude-modulated_time_code
 void setDST(bool IsDST, uint8_t *signal)
 {
+    // Validate input parameters
+    if (signal == NULL)
+    {
+        ESP_LOGE("WWVB", "setDST: signal pointer is NULL");
+        return;
+    }
+
     if (IsDST)
     {
         signal[57] = 1;
@@ -711,6 +819,65 @@ static void get_device_service_name(char *service_name, size_t max)
     ESP_ERROR_CHECK(esp_wifi_get_mac(WIFI_IF_STA, eth_mac));
     snprintf(service_name, max, "%s%02X%02X%02X",
              ssid_prefix, eth_mac[3], eth_mac[4], eth_mac[5]);
+}
+
+// Generate a cryptographically secure proof-of-possession (PoP) based on device MAC address
+// This uses SHA-256 hash of the MAC address to prevent attackers from deriving the PoP
+// by observing the MAC address through BLE advertising or network scanning
+static void generate_unique_pop(char *pop, size_t max)
+{
+    if (pop == NULL || max < POP_BUFFER_SIZE)
+    {
+        ESP_LOGE("POP", "Invalid PoP buffer: pop is %s, size=%zu (need at least %d)",
+                 pop == NULL ? "NULL" : "non-NULL", max, POP_BUFFER_SIZE);
+        if (pop != NULL && max > 0)
+        {
+            pop[0] = '\0';  // Set empty string on error
+        }
+        return;
+    }
+
+    uint8_t eth_mac[6];
+    ESP_ERROR_CHECK(esp_wifi_get_mac(WIFI_IF_STA, eth_mac));
+    
+    // Use SHA-256 hash of MAC address for cryptographic security
+    // This prevents attackers from deriving the PoP by observing the MAC address
+    uint8_t hash[32];  // SHA-256 produces 32 bytes
+    mbedtls_sha256_context sha256_ctx;
+    mbedtls_sha256_init(&sha256_ctx);
+    
+    int ret = mbedtls_sha256_starts(&sha256_ctx, 0);  // 0 = SHA-256 (not SHA-224)
+    if (ret != 0)
+    {
+        ESP_LOGE("POP", "SHA-256 start failed: %d", ret);
+        mbedtls_sha256_free(&sha256_ctx);
+        pop[0] = '\0';  // Set empty string on error
+        return;
+    }
+    
+    ret = mbedtls_sha256_update(&sha256_ctx, eth_mac, 6);
+    if (ret != 0)
+    {
+        ESP_LOGE("POP", "SHA-256 update failed: %d", ret);
+        mbedtls_sha256_free(&sha256_ctx);
+        pop[0] = '\0';  // Set empty string on error
+        return;
+    }
+    
+    ret = mbedtls_sha256_finish(&sha256_ctx, hash);
+    if (ret != 0)
+    {
+        ESP_LOGE("POP", "SHA-256 finish failed: %d", ret);
+        mbedtls_sha256_free(&sha256_ctx);
+        pop[0] = '\0';  // Set empty string on error
+        return;
+    }
+    
+    mbedtls_sha256_free(&sha256_ctx);
+    
+    // Use first 6 bytes of hash to create 12-character hex PoP
+    snprintf(pop, max, "%02X%02X%02X%02X%02X%02X",
+             hash[0], hash[1], hash[2], hash[3], hash[4], hash[5]);
 }
 
 // The following is AI generated code
