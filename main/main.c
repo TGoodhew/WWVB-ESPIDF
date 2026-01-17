@@ -705,7 +705,7 @@ void setDUT1(uint8_t *signal)
         return;
     }
 
-    // DUT1 is obselete, it was used for celestial navigation
+    // DUT1 is obsolete, it was used for celestial navigation
     signal[36] = 0;
     signal[37] = 0;
     signal[38] = 0;
