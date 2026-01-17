@@ -830,6 +830,10 @@ static void generate_unique_pop(char *pop, size_t max)
     {
         ESP_LOGE("POP", "Invalid PoP buffer: pop is %s, size=%zu (need at least %d)",
                  pop == NULL ? "NULL" : "non-NULL", max, POP_BUFFER_SIZE);
+        if (pop != NULL && max > 0)
+        {
+            pop[0] = '\0';  // Set empty string on error
+        }
         return;
     }
 
@@ -847,16 +851,25 @@ static void generate_unique_pop(char *pop, size_t max)
     {
         ESP_LOGE("POP", "SHA-256 start failed: %d", ret);
         mbedtls_sha256_free(&sha256_ctx);
+        pop[0] = '\0';  // Set empty string on error
         return;
     }
     
-    mbedtls_sha256_update(&sha256_ctx, eth_mac, 6);
+    ret = mbedtls_sha256_update(&sha256_ctx, eth_mac, 6);
+    if (ret != 0)
+    {
+        ESP_LOGE("POP", "SHA-256 update failed: %d", ret);
+        mbedtls_sha256_free(&sha256_ctx);
+        pop[0] = '\0';  // Set empty string on error
+        return;
+    }
     
     ret = mbedtls_sha256_finish(&sha256_ctx, hash);
     if (ret != 0)
     {
         ESP_LOGE("POP", "SHA-256 finish failed: %d", ret);
         mbedtls_sha256_free(&sha256_ctx);
+        pop[0] = '\0';  // Set empty string on error
         return;
     }
     
