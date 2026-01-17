@@ -40,7 +40,7 @@
 
 // WWVB Signal Constants
 #define WWVB_CARRIER_FREQUENCY_HZ 60000  // 60 kHz carrier frequency for WWVB signal
-#define PWM_DUTY_CYCLE_50_PERCENT 127    // 50% duty cycle for 8-bit PWM resolution (255/2 ≈ 127)
+#define PWM_DUTY_CYCLE_50_PERCENT (255 / 2)  // 50% duty cycle for 8-bit PWM resolution
 
 // Timer Duration Constants (in microseconds)
 #define TIMER_ONE_SECOND_US 1000000      // 1 second in microseconds
@@ -859,7 +859,7 @@ void Setup60KHzOutput()
 {
     ledc_timer_config_t ledc_timer = {
         .duty_resolution = LEDC_TIMER_8_BIT, // resolution of PWM duty
-        .freq_hz = WWVB_CARRIER_FREQUENCY_HZ,// frequency of PWM signal
+        .freq_hz = WWVB_CARRIER_FREQUENCY_HZ, // frequency of PWM signal
         .speed_mode = LEDC_HIGH_SPEED_MODE,   // timer mode
         .timer_num = LEDC_TIMER_0             // timer index
     };
