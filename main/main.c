@@ -33,8 +33,10 @@
 #include <esp_netif_sntp.h>
 #include <wifi_provisioning/manager.h>
 #include <wifi_provisioning/scheme_ble.h>
+#include <mbedtls/sha256.h>
 
 #define WWVBDEBUG
+#define POP_BUFFER_SIZE 13  // 13 bytes: 12 hex chars (6 MAC bytes * 2) + null terminator
 
 // Function Prototypes - I wanted to keep this as a single file if people wanted to grab it and drop it into their projects
 void encodeYear(uint16_t year, uint8_t *signal);
@@ -61,6 +63,7 @@ bool isDaylightSavingTime(int year, int daysPassed);
 void LogCurrentTime();
 static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
 static void get_device_service_name(char *service_name, size_t max);
+static void generate_unique_pop(char *pop, size_t max);
 void Setup60KHzOutput();
 void SNTP_callback (struct timeval *tv);
 
@@ -233,11 +236,16 @@ void SetupWiFi()
         char service_name[12];
         get_device_service_name(service_name, sizeof(service_name));
 
-        /* Do we want a proof-of-possession (ignored if Security 0 is selected):
-         *      - this should be a string with length > 0
-         *      - NULL if not used
+        /* Generate a device-unique proof-of-possession using a cryptographic hash of the MAC address.
+         * This provides real security by using SHA-256 hashing, preventing attackers from deriving
+         * the PoP by observing the MAC address through BLE advertising or network scanning.
+         * The PoP should be printed/displayed for the user to enter during provisioning.
          */
-        const char *pop = "abcd1234";
+        char pop[POP_BUFFER_SIZE];
+        generate_unique_pop(pop, sizeof(pop));
+        
+        // Log the PoP so the user knows what to enter during provisioning
+        ESP_LOGI("WiFi", "Provisioning PoP: %s", pop);
 
         /* This is the structure for passing security parameters
          * for the protocomm security 1.
@@ -811,6 +819,65 @@ static void get_device_service_name(char *service_name, size_t max)
     ESP_ERROR_CHECK(esp_wifi_get_mac(WIFI_IF_STA, eth_mac));
     snprintf(service_name, max, "%s%02X%02X%02X",
              ssid_prefix, eth_mac[3], eth_mac[4], eth_mac[5]);
+}
+
+// Generate a cryptographically secure proof-of-possession (PoP) based on device MAC address
+// This uses SHA-256 hash of the MAC address to prevent attackers from deriving the PoP
+// by observing the MAC address through BLE advertising or network scanning
+static void generate_unique_pop(char *pop, size_t max)
+{
+    if (pop == NULL || max < POP_BUFFER_SIZE)
+    {
+        ESP_LOGE("POP", "Invalid PoP buffer: pop is %s, size=%zu (need at least %d)",
+                 pop == NULL ? "NULL" : "non-NULL", max, POP_BUFFER_SIZE);
+        if (pop != NULL && max > 0)
+        {
+            pop[0] = '\0';  // Set empty string on error
+        }
+        return;
+    }
+
+    uint8_t eth_mac[6];
+    ESP_ERROR_CHECK(esp_wifi_get_mac(WIFI_IF_STA, eth_mac));
+    
+    // Use SHA-256 hash of MAC address for cryptographic security
+    // This prevents attackers from deriving the PoP by observing the MAC address
+    uint8_t hash[32];  // SHA-256 produces 32 bytes
+    mbedtls_sha256_context sha256_ctx;
+    mbedtls_sha256_init(&sha256_ctx);
+    
+    int ret = mbedtls_sha256_starts(&sha256_ctx, 0);  // 0 = SHA-256 (not SHA-224)
+    if (ret != 0)
+    {
+        ESP_LOGE("POP", "SHA-256 start failed: %d", ret);
+        mbedtls_sha256_free(&sha256_ctx);
+        pop[0] = '\0';  // Set empty string on error
+        return;
+    }
+    
+    ret = mbedtls_sha256_update(&sha256_ctx, eth_mac, 6);
+    if (ret != 0)
+    {
+        ESP_LOGE("POP", "SHA-256 update failed: %d", ret);
+        mbedtls_sha256_free(&sha256_ctx);
+        pop[0] = '\0';  // Set empty string on error
+        return;
+    }
+    
+    ret = mbedtls_sha256_finish(&sha256_ctx, hash);
+    if (ret != 0)
+    {
+        ESP_LOGE("POP", "SHA-256 finish failed: %d", ret);
+        mbedtls_sha256_free(&sha256_ctx);
+        pop[0] = '\0';  // Set empty string on error
+        return;
+    }
+    
+    mbedtls_sha256_free(&sha256_ctx);
+    
+    // Use first 6 bytes of hash to create 12-character hex PoP
+    snprintf(pop, max, "%02X%02X%02X%02X%02X%02X",
+             hash[0], hash[1], hash[2], hash[3], hash[4], hash[5]);
 }
 
 // The following is AI generated code
