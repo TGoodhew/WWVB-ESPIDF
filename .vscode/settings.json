@@ -1,7 +1,7 @@
 {
     "C_Cpp.intelliSenseEngine": "default",
     "idf.espIdfPathWin": "C:\\Users\\tony\\esp\\v5.5.2\\esp-idf",
-    "idf.pythonInstallPath": "C:\\Users\\Tony\\.espressif\\tools\\idf-python\\3.11.2\\python.exe",
+    "idf.pythonInstallPath": "/opt/esp/python_env/idf5.5_py3.12_env/bin/python",
     "idf.openOcdConfigs": [
         "interface/ftdi/esp32_devkitj_v1.cfg",
         "target/esp32.cfg"
@@ -11,5 +11,8 @@
     "idf.flashType": "UART",
     "files.associations": {
         "esp_chip_info.h": "c"
-    }
+    },
+    "idf.espIdfPath": "/opt/esp/idf",
+    "idf.toolsPath": "/opt/esp",
+    "idf.pythonBinPath": "/opt/esp/python_env/idf6.1_py3.12_env/bin/python"
 }
