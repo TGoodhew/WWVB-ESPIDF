@@ -27,7 +27,7 @@ This is a WWVB (60 kHz time signal) emulator running on an Adafruit Huzzah32 Fea
 
 1. **Naming Conventions**:
    - Functions: PascalCase (e.g., `SetupWiFi()`, `SetupSNTP()`, `TimerSecond_ISR()`)
-   - Variables: camelCase (e.g., `isProvisioned`, `ntpServer`, `ledc_channel`)
+   - Variables: snake_case (e.g., `is_provisioned`, `s_retry_num`, `wifi_sta_cfg`, `strftime_buf`, `ledc_channel`)
    - Constants: camelCase for simple constants, UPPER_CASE for defines
    - ISR functions: Suffix with `_ISR` (e.g., `TimerSecond_ISR()`)
 
@@ -51,7 +51,7 @@ This is a WWVB (60 kHz time signal) emulator running on an Adafruit Huzzah32 Fea
 ### Hardware-Specific Considerations
 
 1. **GPIO Configuration**:
-   - GPIO 13 is used for signal output
+   - GPIO 26 (A0 on the Huzzah32) is used for the 60 kHz WWVB signal output; GPIO 13 is used only for debug output
    - Always reset pins before configuring: `gpio_reset_pin(GPIO_NUM_XX)`
    - Set direction explicitly: `gpio_set_direction()`
 
