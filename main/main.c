@@ -38,6 +38,23 @@
 #define WWVBDEBUG
 #define POP_BUFFER_SIZE 13  // 13 bytes: 12 hex chars (6 MAC bytes * 2) + null terminator
 
+// WWVB Signal Constants
+#define WWVB_CARRIER_FREQUENCY_HZ 60000  // 60 kHz carrier frequency for WWVB signal
+#define PWM_DUTY_CYCLE_50_PERCENT 127    // 50% duty cycle for 8-bit PWM resolution (255/2 ≈ 127)
+
+// Timer Duration Constants (in microseconds)
+#define TIMER_ONE_SECOND_US 1000000      // 1 second in microseconds
+#define TIMER_BIT0_DURATION_US 200000    // 0.2 second - WWVB bit '0' reduced power duration
+#define TIMER_BIT1_DURATION_US 500000    // 0.5 second - WWVB bit '1' reduced power duration
+#define TIMER_MARKER_DURATION_US 800000  // 0.8 second - WWVB marker reduced power duration
+
+// SNTP Constants
+#define SNTP_SYNC_TIMEOUT_MS 10000       // 10 second timeout for SNTP synchronization
+
+// Task and Buffer Size Constants
+#define DEBUG_TASK_STACK_SIZE 2048       // Stack size for debug task
+#define TIME_STRING_BUFFER_SIZE 64       // Buffer size for time string formatting
+
 // Function Prototypes - I wanted to keep this as a single file if people wanted to grab it and drop it into their projects
 void encodeYear(uint16_t year, uint8_t *signal);
 void encodeDayOfYear(uint16_t dayOfYear, uint8_t *signal);
@@ -167,7 +184,7 @@ void app_main(void)
         ESP_LOGE("Main", "Failed to create debug queue");
     } else {
         // Create debug task to handle logging from ISR
-        BaseType_t task_created = xTaskCreate(debug_task, "debug_task", 2048, NULL, 5, NULL);
+        BaseType_t task_created = xTaskCreate(debug_task, "debug_task", DEBUG_TASK_STACK_SIZE, NULL, 5, NULL);
         if (task_created != pdPASS) {
             ESP_LOGE("Main", "Failed to create debug task");
         }
@@ -194,7 +211,7 @@ void SetupSNTP()
     
     for (int retry = 0; retry < max_retries; retry++)
     {
-        sntp_result = esp_netif_sntp_sync_wait(pdMS_TO_TICKS(10000));
+        sntp_result = esp_netif_sntp_sync_wait(pdMS_TO_TICKS(SNTP_SYNC_TIMEOUT_MS));
         
         if (sntp_result == ESP_OK)
         {
@@ -232,7 +249,7 @@ void SNTP_callback (struct timeval *tv)
         return;
     }
     
-    ESP_ERROR_CHECK(esp_timer_start_periodic(TimerSecond, 1000000)); // 1 second
+    ESP_ERROR_CHECK(esp_timer_start_periodic(TimerSecond, TIMER_ONE_SECOND_US)); // 1 second
 }
 
 void SetupWiFi()
@@ -412,7 +429,7 @@ void LogCurrentTime()
     }
 
     // Format the time as a string
-    char strftime_buf[64];
+    char strftime_buf[TIME_STRING_BUFFER_SIZE];
     strftime(strftime_buf, sizeof(strftime_buf), "%c", utcTime);
 
     // Write the system time as a log entry
@@ -486,7 +503,7 @@ void IRAM_ATTR TimerSignalReenable_ISR()
 {
     // Remove ESP_ERROR_CHECK - just call the functions directly
     // Errors in ISR context cannot be safely handled
-    ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, 127);
+    ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, PWM_DUTY_CYCLE_50_PERCENT);
     ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
 }
 
@@ -522,7 +539,7 @@ void TimerSecond_ISR(void *param)
       // TimerBit0 - Start timer without ESP_ERROR_CHECK
       if (TimerBit0 != NULL)
       {
-          esp_timer_start_once(TimerBit0, 200000); // 0.2 second
+          esp_timer_start_once(TimerBit0, TIMER_BIT0_DURATION_US); // 0.2 second
       }
     }
   break;
@@ -542,7 +559,7 @@ void TimerSecond_ISR(void *param)
       // TimerBit1 - Start timer without ESP_ERROR_CHECK
       if (TimerBit1 != NULL)
       {
-          esp_timer_start_once(TimerBit1, 500000); // 0.5 second
+          esp_timer_start_once(TimerBit1, TIMER_BIT1_DURATION_US); // 0.5 second
       }
 
   }
@@ -563,7 +580,7 @@ void TimerSecond_ISR(void *param)
       // TimerBitMarker - Start timer without ESP_ERROR_CHECK
       if (TimerBitMarker != NULL)
       {
-          esp_timer_start_once(TimerBitMarker, 800000); // 0.8 second
+          esp_timer_start_once(TimerBitMarker, TIMER_MARKER_DURATION_US); // 0.8 second
       }
   }
   break;
@@ -842,7 +859,7 @@ void Setup60KHzOutput()
 {
     ledc_timer_config_t ledc_timer = {
         .duty_resolution = LEDC_TIMER_8_BIT, // resolution of PWM duty
-        .freq_hz = 60000,                     // frequency of PWM signal
+        .freq_hz = WWVB_CARRIER_FREQUENCY_HZ,// frequency of PWM signal
         .speed_mode = LEDC_HIGH_SPEED_MODE,   // timer mode
         .timer_num = LEDC_TIMER_0             // timer index
     };
@@ -850,7 +867,7 @@ void Setup60KHzOutput()
     ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
 
     ledc_channel.channel = LEDC_CHANNEL_0;
-    ledc_channel.duty = 127;
+    ledc_channel.duty = PWM_DUTY_CYCLE_50_PERCENT;
     ledc_channel.gpio_num = (gpio_num_t)CONFIG_WWVB_OUTPUT_PIN; // Configurable GPIO for WWVB output (default: 26/A0 on Huzzah32)
     ledc_channel.speed_mode = LEDC_HIGH_SPEED_MODE;
     ledc_channel.timer_sel = LEDC_TIMER_0;
