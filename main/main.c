@@ -179,7 +179,7 @@ void SetupSNTP()
 
 void SNTP_callback (struct timeval *tv)
 {
-    ESP_LOGI("SNTP", "SNTP Syncronized");
+    ESP_LOGI("SNTP", "SNTP Synchronized");
     
     // Validate timer handle before starting
     if (TimerSecond == NULL)
@@ -354,6 +354,13 @@ void LogCurrentTime()
 
     time(&rawtime);
     utcTime = gmtime(&rawtime);
+
+    // Validate gmtime() return value
+    if (utcTime == NULL)
+    {
+        ESP_LOGE("Time", "Failed to get UTC time, gmtime returned NULL");
+        return;
+    }
 
     // Format the time as a string
     char strftime_buf[64];
