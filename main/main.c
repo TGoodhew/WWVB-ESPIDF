@@ -38,6 +38,12 @@
 #define WWVBDEBUG
 #define POP_BUFFER_SIZE 13  // 13 bytes: 12 hex chars (6 MAC bytes * 2) + null terminator
 
+// Task configuration constants
+#define WWVB_UPDATE_TASK_STACK_SIZE 3072
+#define WWVB_UPDATE_TASK_PRIORITY 6
+#define DEBUG_TASK_STACK_SIZE 2048
+#define DEBUG_TASK_PRIORITY 5
+
 // Function Prototypes - I wanted to keep this as a single file if people wanted to grab it and drop it into their projects
 void encodeYear(uint16_t year, uint8_t *signal);
 void encodeDayOfYear(uint16_t dayOfYear, uint8_t *signal);
@@ -106,8 +112,12 @@ void wwvb_update_task(void *pvParameters)
 {
     while (1) {
         // Wait for semaphore from ISR indicating minute boundary
-        if (xSemaphoreTake(wwvb_update_semaphore, portMAX_DELAY) == pdTRUE) {
+        BaseType_t result = xSemaphoreTake(wwvb_update_semaphore, portMAX_DELAY);
+        if (result == pdTRUE) {
             SetupWWVBArray();
+        } else {
+            // This should not happen with portMAX_DELAY, but log for debugging
+            ESP_LOGE("WWVB", "Failed to take semaphore in wwvb_update_task");
         }
     }
 }
@@ -181,7 +191,9 @@ void app_main(void)
         ESP_LOGE("Main", "Failed to create WWVB update semaphore");
     } else {
         // Create task to handle WWVB array updates at minute boundaries
-        BaseType_t task_created = xTaskCreate(wwvb_update_task, "wwvb_update", 3072, NULL, 6, NULL);
+        BaseType_t task_created = xTaskCreate(wwvb_update_task, "wwvb_update", 
+                                               WWVB_UPDATE_TASK_STACK_SIZE, NULL, 
+                                               WWVB_UPDATE_TASK_PRIORITY, NULL);
         if (task_created != pdPASS) {
             ESP_LOGE("Main", "Failed to create WWVB update task");
         }
@@ -193,7 +205,9 @@ void app_main(void)
         ESP_LOGE("Main", "Failed to create debug queue");
     } else {
         // Create debug task to handle logging from ISR
-        BaseType_t task_created = xTaskCreate(debug_task, "debug_task", 2048, NULL, 5, NULL);
+        BaseType_t task_created = xTaskCreate(debug_task, "debug_task", 
+                                               DEBUG_TASK_STACK_SIZE, NULL, 
+                                               DEBUG_TASK_PRIORITY, NULL);
         if (task_created != pdPASS) {
             ESP_LOGE("Main", "Failed to create debug task");
         }
