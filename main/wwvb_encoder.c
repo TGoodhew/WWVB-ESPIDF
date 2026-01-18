@@ -92,21 +92,81 @@
 #define LEAP_YEAR_TEST_DAY 0     // Zero day of March rolls back to last day of February
 #define LEAP_YEAR_FEB_29 29      // Day value for February 29
 
+/**
+ * @brief Encode a decimal value into Binary-Coded Decimal (BCD) format
+ * 
+ * BCD represents each decimal digit as a 4-bit binary number (nibble).
+ * This function converts a decimal number (0-999) into a 16-bit BCD value
+ * where each nibble represents one decimal digit.
+ * 
+ * Algorithm:
+ * 1. Extract hundreds digit: n / 100
+ * 2. Extract tens digit: (n / 10) % 10
+ * 3. Extract ones digit: n % 10
+ * 4. Pack into 16-bit result: [hundreds nibble][tens nibble][ones nibble]
+ * 
+ * Example: n=142
+ *   - Hundreds: 1 → 0x0001
+ *   - Tens:     4 → 0x0004
+ *   - Ones:     2 → 0x0002
+ *   - Result: 0x0142 (bit pattern: 0000 0001 0100 0010)
+ * 
+ * Example: n=59 (minute or second value)
+ *   - Hundreds: 0 → 0x0000
+ *   - Tens:     5 → 0x0005
+ *   - Ones:     9 → 0x0009
+ *   - Result: 0x0059 (bit pattern: 0000 0000 0101 1001)
+ * 
+ * @param n Decimal value to encode (0-999)
+ * @return BCD-encoded 16-bit value with each decimal digit in a 4-bit nibble
+ */
 uint16_t BitsEncoder(uint16_t n)
 {
     uint16_t result = 0;
 
-    const uint8_t div1 = n / BCD_DIVISOR_100;                              // Hundreds digit
-    const uint8_t div2 = (n / BCD_DIVISOR_10) % BCD_DIVISOR_10;           // Tens digit
-    const uint8_t mod = n % BCD_DIVISOR_10;                               // Ones digit
+    // Extract individual decimal digits
+    const uint8_t div1 = n / BCD_DIVISOR_100;                              // Hundreds digit (0-9)
+    const uint8_t div2 = (n / BCD_DIVISOR_10) % BCD_DIVISOR_10;           // Tens digit (0-9)
+    const uint8_t mod = n % BCD_DIVISOR_10;                               // Ones digit (0-9)
 
-    result = (div1 & BCD_MASK_NIBBLE) << 8;
-    result |= (div2 & BCD_MASK_NIBBLE) << 4;
-    result |= (mod & BCD_MASK_NIBBLE);
+    // Pack digits into BCD format: [bits 11-8: hundreds][bits 7-4: tens][bits 3-0: ones]
+    // Mask with 0xF ensures only lower 4 bits of each digit are used
+    result = (div1 & BCD_MASK_NIBBLE) << 8;     // Hundreds in bits 11-8
+    result |= (div2 & BCD_MASK_NIBBLE) << 4;    // Tens in bits 7-4
+    result |= (mod & BCD_MASK_NIBBLE);          // Ones in bits 3-0
 
     return result;
 }
 
+/**
+ * @brief Encode year value into WWVB signal format
+ * 
+ * WWVB encodes the 2-digit year (00-99) in 8 bit positions using BCD format.
+ * The year is split across two groups with position 49 (a marker) in between:
+ * - Positions 45-48: Lower nibble (ones digit) of year in BCD
+ * - Position 49: Marker bit (not used for year)
+ * - Positions 50-53: Upper nibble (tens digit) of year in BCD
+ * 
+ * Algorithm:
+ * 1. Convert 4-digit year (e.g., 2024) to 2-digit year (24) using modulo 100
+ * 2. Use BitsEncoder to get BCD representation (e.g., 24 → 0x24 = 0010 0100)
+ * 3. Extract individual bits from BCD result
+ * 4. Write bits to appropriate WWVB frame positions (LSB to MSB order)
+ * 
+ * Example: year=2024 → yearBCD=24 → bitsResult=0x0024 (binary: 0000 0000 0010 0100)
+ *   Position 45: bit 7 (MSB of upper nibble) = 0
+ *   Position 46: bit 6                        = 0
+ *   Position 47: bit 5                        = 1
+ *   Position 48: bit 4 (LSB of upper nibble)  = 0
+ *   [Position 49 is a marker]
+ *   Position 50: bit 3 (MSB of lower nibble)  = 0
+ *   Position 51: bit 2                        = 1
+ *   Position 52: bit 1                        = 0
+ *   Position 53: bit 0 (LSB)                  = 0
+ * 
+ * @param year Full 4-digit year (WWVB_MIN_YEAR to WWVB_MAX_YEAR, e.g., 2024)
+ * @param signal Pointer to 60-byte WWVB signal array to update
+ */
 void encodeYear(uint16_t year, volatile uint8_t *signal)
 {
     // Validate input parameters
@@ -123,20 +183,47 @@ void encodeYear(uint16_t year, volatile uint8_t *signal)
         return;
     }
 
-    const int yearBCD = year % BCD_DIVISOR_100;
-    const uint16_t bitsResult = BitsEncoder(yearBCD);
+    const int yearBCD = year % BCD_DIVISOR_100;  // Convert to 2-digit year (e.g., 2024 → 24)
+    const uint16_t bitsResult = BitsEncoder(yearBCD);  // Convert to BCD (e.g., 24 → 0x0024)
 
-    // Encode year into WWVB signal positions (8 bits)
-    signal[WWVB_YEAR_BIT_45] = (bitsResult & 0x80) >> 7;
-    signal[WWVB_YEAR_BIT_46] = (bitsResult & 0x40) >> 6;
-    signal[WWVB_YEAR_BIT_47] = (bitsResult & 0x20) >> 5;
-    signal[WWVB_YEAR_BIT_48] = (bitsResult & 0x10) >> 4;
-    signal[WWVB_YEAR_BIT_50] = (bitsResult & 0x08) >> 3;
-    signal[WWVB_YEAR_BIT_51] = (bitsResult & 0x04) >> 2;
-    signal[WWVB_YEAR_BIT_52] = (bitsResult & 0x02) >> 1;
-    signal[WWVB_YEAR_BIT_53] = (bitsResult & 0x01);
+    // Encode year into WWVB signal positions 45-48 and 50-53 (8 bits total)
+    // Extract and write individual bits from BCD result to frame positions
+    // Bits are written in MSB-to-LSB order within each nibble
+    signal[WWVB_YEAR_BIT_45] = (bitsResult & 0x80) >> 7;  // Upper nibble bit 3 (MSB)
+    signal[WWVB_YEAR_BIT_46] = (bitsResult & 0x40) >> 6;  // Upper nibble bit 2
+    signal[WWVB_YEAR_BIT_47] = (bitsResult & 0x20) >> 5;  // Upper nibble bit 1
+    signal[WWVB_YEAR_BIT_48] = (bitsResult & 0x10) >> 4;  // Upper nibble bit 0 (LSB)
+    // Position 49 is a marker bit
+    signal[WWVB_YEAR_BIT_50] = (bitsResult & 0x08) >> 3;  // Lower nibble bit 3 (MSB)
+    signal[WWVB_YEAR_BIT_51] = (bitsResult & 0x04) >> 2;  // Lower nibble bit 2
+    signal[WWVB_YEAR_BIT_52] = (bitsResult & 0x02) >> 1;  // Lower nibble bit 1
+    signal[WWVB_YEAR_BIT_53] = (bitsResult & 0x01);       // Lower nibble bit 0 (LSB)
 }
 
+/**
+ * @brief Encode day of year into WWVB signal format
+ * 
+ * WWVB encodes the day of year (Julian day, 001-366) in 10 bit positions using BCD format.
+ * The day is split across three groups with markers at positions 19, 24, and 29:
+ * - Positions 22-23: Hundreds digit (0-3) - 2 bits
+ * - Positions 25-28: Tens digit (0-9) - 4 bits
+ * - Positions 30-33: Ones digit (0-9) - 4 bits
+ * 
+ * Example: dayOfYear=365 → bitsResult=0x0365 (binary: 0011 0110 0101)
+ *   Position 22: bit 9 (hundreds bit 1)       = 1  (represents 2^9 = 512... but max is 366)
+ *   Position 23: bit 8 (hundreds bit 0)       = 1  (represents 2^8 = 256)
+ *   Position 25: bit 7 (tens bit 3, MSB)      = 0
+ *   Position 26: bit 6 (tens bit 2)           = 1
+ *   Position 27: bit 5 (tens bit 1)           = 1
+ *   Position 28: bit 4 (tens bit 0, LSB)      = 0
+ *   Position 30: bit 3 (ones bit 3, MSB)      = 0
+ *   Position 31: bit 2 (ones bit 2)           = 1
+ *   Position 32: bit 1 (ones bit 1)           = 0
+ *   Position 33: bit 0 (ones bit 0, LSB)      = 1
+ * 
+ * @param dayOfYear Day of year (WWVB_MIN_DAY_OF_YEAR to WWVB_MAX_DAY_OF_YEAR, 1-366)
+ * @param signal Pointer to 60-byte WWVB signal array to update
+ */
 void encodeDayOfYear(uint16_t dayOfYear, volatile uint8_t *signal)
 {
     // Validate input parameters
@@ -153,21 +240,44 @@ void encodeDayOfYear(uint16_t dayOfYear, volatile uint8_t *signal)
         return;
     }
 
-    const uint16_t bitsResult = BitsEncoder(dayOfYear);
+    const uint16_t bitsResult = BitsEncoder(dayOfYear);  // Convert to BCD (e.g., 365 → 0x0365)
 
-    // Encode day of year into WWVB signal positions (10 bits)
-    signal[WWVB_DAY_BIT_22] = (bitsResult & 0x0200) >> 9;
-    signal[WWVB_DAY_BIT_23] = (bitsResult & 0x0100) >> 8;
-    signal[WWVB_DAY_BIT_25] = (bitsResult & 0x0080) >> 7;
-    signal[WWVB_DAY_BIT_26] = (bitsResult & 0x0040) >> 6;
-    signal[WWVB_DAY_BIT_27] = (bitsResult & 0x0020) >> 5;
-    signal[WWVB_DAY_BIT_28] = (bitsResult & 0x0010) >> 4;
-    signal[WWVB_DAY_BIT_30] = (bitsResult & 0x0008) >> 3;
-    signal[WWVB_DAY_BIT_31] = (bitsResult & 0x0004) >> 2;
-    signal[WWVB_DAY_BIT_32] = (bitsResult & 0x0002) >> 1;
-    signal[WWVB_DAY_BIT_33] = (bitsResult & 0x0001);
+    // Encode day of year into WWVB signal positions 22-23, 25-28, 30-33 (10 bits total)
+    // Markers at positions 19, 24, and 29 break up the encoding
+    signal[WWVB_DAY_BIT_22] = (bitsResult & 0x0200) >> 9;  // Hundreds digit bit 1
+    signal[WWVB_DAY_BIT_23] = (bitsResult & 0x0100) >> 8;  // Hundreds digit bit 0
+    // Position 24 is reserved (always 0)
+    signal[WWVB_DAY_BIT_25] = (bitsResult & 0x0080) >> 7;  // Tens digit bit 3 (MSB)
+    signal[WWVB_DAY_BIT_26] = (bitsResult & 0x0040) >> 6;  // Tens digit bit 2
+    signal[WWVB_DAY_BIT_27] = (bitsResult & 0x0020) >> 5;  // Tens digit bit 1
+    signal[WWVB_DAY_BIT_28] = (bitsResult & 0x0010) >> 4;  // Tens digit bit 0 (LSB)
+    // Position 29 is a marker bit
+    signal[WWVB_DAY_BIT_30] = (bitsResult & 0x0008) >> 3;  // Ones digit bit 3 (MSB)
+    signal[WWVB_DAY_BIT_31] = (bitsResult & 0x0004) >> 2;  // Ones digit bit 2
+    signal[WWVB_DAY_BIT_32] = (bitsResult & 0x0002) >> 1;  // Ones digit bit 1
+    signal[WWVB_DAY_BIT_33] = (bitsResult & 0x0001);       // Ones digit bit 0 (LSB)
 }
 
+/**
+ * @brief Encode hour value into WWVB signal format
+ * 
+ * WWVB encodes the hour (00-23) in 6 bit positions using BCD format.
+ * The hour is split across two groups with markers/reserved bits between them:
+ * - Positions 12-13: Tens digit (0-2) - 2 bits (only need 0-2 for 00-23)
+ * - Position 14: Reserved (always 0)
+ * - Positions 15-18: Ones digit (0-9) - 4 bits
+ * 
+ * Example: hour=13 → bitsResult=0x0013 (binary: 0001 0011)
+ *   Position 12: bit 5 (tens bit 1)         = 1  (represents 10)
+ *   Position 13: bit 4 (tens bit 0)         = 0
+ *   Position 15: bit 3 (ones bit 3, MSB)    = 0
+ *   Position 16: bit 2 (ones bit 2)         = 0
+ *   Position 17: bit 1 (ones bit 1)         = 1
+ *   Position 18: bit 0 (ones bit 0, LSB)    = 1
+ * 
+ * @param hour Hour in 24-hour format (0 to WWVB_MAX_HOUR, 0-23)
+ * @param signal Pointer to 60-byte WWVB signal array to update
+ */
 void encodeHour(uint8_t hour, volatile uint8_t *signal)
 {
     // Validate input parameters
@@ -183,17 +293,54 @@ void encodeHour(uint8_t hour, volatile uint8_t *signal)
         return;
     }
 
-    const uint16_t bitsResult = BitsEncoder(hour);
+    const uint16_t bitsResult = BitsEncoder(hour);  // Convert to BCD (e.g., 13 → 0x0013)
 
-    // Encode hour into WWVB signal positions (6 bits)
-    signal[WWVB_HOUR_BIT_12] = (bitsResult & 0x20) >> 5;
-    signal[WWVB_HOUR_BIT_13] = (bitsResult & 0x10) >> 4;
-    signal[WWVB_HOUR_BIT_15] = (bitsResult & 0x08) >> 3;
-    signal[WWVB_HOUR_BIT_16] = (bitsResult & 0x04) >> 2;
-    signal[WWVB_HOUR_BIT_17] = (bitsResult & 0x02) >> 1;
-    signal[WWVB_HOUR_BIT_18] = (bitsResult & 0x01);
+    // Encode hour into WWVB signal positions 12-13 and 15-18 (6 bits total)
+    // Position 14 is reserved (always 0)
+    signal[WWVB_HOUR_BIT_12] = (bitsResult & 0x20) >> 5;  // Tens digit bit 1
+    signal[WWVB_HOUR_BIT_13] = (bitsResult & 0x10) >> 4;  // Tens digit bit 0
+    // Position 14 is reserved
+    signal[WWVB_HOUR_BIT_15] = (bitsResult & 0x08) >> 3;  // Ones digit bit 3 (MSB)
+    signal[WWVB_HOUR_BIT_16] = (bitsResult & 0x04) >> 2;  // Ones digit bit 2
+    signal[WWVB_HOUR_BIT_17] = (bitsResult & 0x02) >> 1;  // Ones digit bit 1
+    signal[WWVB_HOUR_BIT_18] = (bitsResult & 0x01);       // Ones digit bit 0 (LSB)
 }
 
+/**
+ * @brief Encode minute value into WWVB signal format
+ * 
+ * WWVB encodes the minute (00-59) in 7 bit positions using BCD format.
+ * The minute encoding in WWVB is unusual compared to other fields:
+ * - Positions 1-3: Lower 3 bits of ones digit (bit positions 6, 5, 4 of BCD)
+ * - Position 4: Reserved (always 0)
+ * - Positions 5-8: All 4 bits of tens digit (bit positions 3, 2, 1, 0 of BCD)
+ * 
+ * BCD Format Review:
+ * In BCD, a 2-digit decimal number is encoded as:
+ * - Bits 7-4: Ones digit (0-9)
+ * - Bits 3-0: Tens digit (0-5 for minutes)
+ * 
+ * Example: minute=42 → BitsEncoder returns 0x0042
+ *   Binary: 0000 0000 0100 0010
+ *           └─unused─┘ └ones┘ └tens┘
+ *   
+ *   Breaking down 0x42:
+ *   - Bit 7: 0 (ones MSB, unused)
+ *   - Bit 6: 0 (ones bit 2) → Position 1
+ *   - Bit 5: 1 (ones bit 1) → Position 2  
+ *   - Bit 4: 0 (ones bit 0) → Position 3
+ *   - Bit 3: 0 (tens bit 3) → Position 5
+ *   - Bit 2: 1 (tens bit 2) → Position 6
+ *   - Bit 1: 0 (tens bit 1) → Position 7
+ *   - Bit 0: 0 (tens bit 0) → Position 8
+ * 
+ * So minute 42 = 40 + 2:
+ *   - Ones digit (2) in BCD: 0010 (bits 6-4 = 010)
+ *   - Tens digit (4) in BCD: 0100 (bits 3-0 = 0100)
+ * 
+ * @param minute Minute value (0 to WWVB_MAX_MINUTE, 0-59)
+ * @param signal Pointer to 60-byte WWVB signal array to update
+ */
 void encodeMinute(uint8_t minute, volatile uint8_t *signal)
 {
     // Validate input parameters
@@ -209,18 +356,40 @@ void encodeMinute(uint8_t minute, volatile uint8_t *signal)
         return;
     }
 
-    const uint16_t bitsResult = BitsEncoder(minute);
+    const uint16_t bitsResult = BitsEncoder(minute);  // Convert to BCD (e.g., 42 → 0x0042)
 
-    // Encode minute into WWVB signal positions (7 bits)
-    signal[WWVB_MINUTE_BIT_1] = (bitsResult & 0x40) >> 6;
-    signal[WWVB_MINUTE_BIT_2] = (bitsResult & 0x20) >> 5;
-    signal[WWVB_MINUTE_BIT_3] = (bitsResult & 0x10) >> 4;
-    signal[WWVB_MINUTE_BIT_5] = (bitsResult & 0x08) >> 3;
-    signal[WWVB_MINUTE_BIT_6] = (bitsResult & 0x04) >> 2;
-    signal[WWVB_MINUTE_BIT_7] = (bitsResult & 0x02) >> 1;
-    signal[WWVB_MINUTE_BIT_8] = (bitsResult & 0x01);
+    // Encode minute into WWVB signal positions 1-3 and 5-8 (7 bits total)
+    // Position 0 is a marker, Position 4 is reserved (always 0)
+    // Extract ones digit (bits 6, 5, 4 of BCD result)
+    signal[WWVB_MINUTE_BIT_1] = (bitsResult & 0x40) >> 6;  // Bit 6 (ones digit bit 2)
+    signal[WWVB_MINUTE_BIT_2] = (bitsResult & 0x20) >> 5;  // Bit 5 (ones digit bit 1)
+    signal[WWVB_MINUTE_BIT_3] = (bitsResult & 0x10) >> 4;  // Bit 4 (ones digit bit 0)
+    // Position 4 is reserved
+    // Extract tens digit (bits 3, 2, 1, 0 of BCD result)
+    signal[WWVB_MINUTE_BIT_5] = (bitsResult & 0x08) >> 3;  // Bit 3 (tens digit bit 3, MSB)
+    signal[WWVB_MINUTE_BIT_6] = (bitsResult & 0x04) >> 2;  // Bit 2 (tens digit bit 2)
+    signal[WWVB_MINUTE_BIT_7] = (bitsResult & 0x02) >> 1;  // Bit 1 (tens digit bit 1)
+    signal[WWVB_MINUTE_BIT_8] = (bitsResult & 0x01);       // Bit 0 (tens digit bit 0, LSB)
 }
 
+/**
+ * @brief Set WWVB position markers and always-zero indicator bits
+ * 
+ * WWVB uses special marker bits for frame synchronization and reserved bits that
+ * must always be zero. This function sets all such fixed-value bits in the frame.
+ * 
+ * Position Markers (0.8 second reduced power):
+ *   - Every 10 seconds: positions 0, 9, 19, 29, 39, 49, 59
+ *   - These help receivers synchronize to the frame structure
+ *   - Easily distinguished from data bits by their longer (800ms) duration
+ * 
+ * Always-Zero Bits (reserved positions):
+ *   - Positions: 4, 10, 11, 14, 20, 21, 24, 34, 35, 44, 54
+ *   - These are reserved by the WWVB protocol specification
+ *   - Receivers can use these for error detection (if not 0, frame is corrupted)
+ * 
+ * @param signal Pointer to 60-byte WWVB signal array to update
+ */
 void setMarkersAndIndicators(volatile uint8_t *signal)
 {
     // Validate input parameters
@@ -253,6 +422,22 @@ void setMarkersAndIndicators(volatile uint8_t *signal)
     signal[WWVB_ZERO_BIT_54] = WWVB_BIT_ZERO;
 }
 
+/**
+ * @brief Set DUT1 (UT1-UTC difference) indicator bits to zero
+ * 
+ * DUT1 represents the difference between UT1 (astronomical time based on Earth's rotation)
+ * and UTC (atomic time). This was historically used for celestial navigation.
+ * 
+ * As of 2013, NIST deprecated DUT1 encoding in WWVB because:
+ * 1. GPS provides more accurate timing for navigation
+ * 2. The encoding was complex and rarely used
+ * 3. Modern applications don't require UT1-UTC difference
+ * 
+ * All DUT1 bits (positions 36-38 and 40-43) are now set to zero per current protocol.
+ * Position 39 is a marker bit, not part of DUT1 encoding.
+ * 
+ * @param signal Pointer to 60-byte WWVB signal array to update
+ */
 void setDUT1(volatile uint8_t *signal)
 {
     // Validate input parameters
@@ -273,6 +458,30 @@ void setDUT1(volatile uint8_t *signal)
     signal[WWVB_DUT1_BIT_43] = WWVB_BIT_ZERO;
 }
 
+/**
+ * @brief Set leap year indicator bit
+ * 
+ * Sets position 55 to indicate whether the current year is a leap year.
+ * WWVB receivers use this to correctly calculate dates from day-of-year values.
+ * 
+ * Algorithm uses mktime() trick to detect leap year:
+ * 1. Create a tm structure for March 0 (day before March 1) of the target year
+ * 2. Call mktime() which normalizes the date
+ * 3. If the normalized day is 29, February has 29 days (leap year)
+ * 4. If the normalized day is 28, February has 28 days (not leap year)
+ * 
+ * This approach is more reliable than manual leap year calculation because
+ * it uses the C library's date normalization, which handles all edge cases.
+ * 
+ * Leap Year Rules (for reference):
+ * - Divisible by 4: leap year
+ * - EXCEPT divisible by 100: not a leap year
+ * - EXCEPT divisible by 400: leap year
+ * Examples: 2000 (leap), 1900 (not leap), 2024 (leap), 2100 (not leap)
+ * 
+ * @param year Full 4-digit year (WWVB_MIN_YEAR to WWVB_MAX_YEAR)
+ * @param signal Pointer to 60-byte WWVB signal array to update
+ */
 void setLeapYear(uint16_t year, volatile uint8_t *signal)
 {
     // Validate input parameters
@@ -289,18 +498,44 @@ void setLeapYear(uint16_t year, volatile uint8_t *signal)
         return;
     }
 
-    // Use mktime to determine if year is a leap year by checking if Feb has 29 days
+    // Use mktime() to determine if year is a leap year
+    // Set March 0 (which normalizes to last day of February)
     struct tm time_in = {0};
-    time_in.tm_year = year - YEAR_OFFSET_1900;
-    time_in.tm_mon = LEAP_YEAR_MARCH_MONTH;     // March (0-based: January is 0)
-    time_in.tm_mday = LEAP_YEAR_TEST_DAY;       // Zero day of March rolls back to last day of Feb
+    time_in.tm_year = year - YEAR_OFFSET_1900;       // tm_year is years since 1900
+    time_in.tm_mon = LEAP_YEAR_MARCH_MONTH;          // March (0-based: Jan=0, Feb=1, Mar=2)
+    time_in.tm_mday = LEAP_YEAR_TEST_DAY;            // Day 0 of March
 
-    mktime(&time_in);
+    mktime(&time_in);  // Normalize the date (March 0 → last day of February)
 
-    // If mktime leaves the day as 29 then February has 29 days (leap year)
+    // After normalization, if day is 29, then Feb has 29 days (leap year)
+    // If day is 28, then Feb has 28 days (not a leap year)
     signal[WWVB_LEAP_YEAR_BIT] = (time_in.tm_mday == LEAP_YEAR_FEB_29) ? WWVB_BIT_ONE : WWVB_BIT_ZERO;
 }
 
+/**
+ * @brief Set leap second warning indicator bit
+ * 
+ * Position 56 indicates whether a leap second will be inserted at the end of the
+ * current month. When set to 1, a leap second (23:59:60) will occur at month's end.
+ * 
+ * Leap seconds are occasionally added to UTC to keep it synchronized with Earth's
+ * rotation (UT1), which is gradually slowing down. The decision to add a leap second
+ * is made by the International Earth Rotation and Reference Systems Service (IERS)
+ * typically with several months notice.
+ * 
+ * This implementation sets the bit to 0 (no leap second) as:
+ * 1. Leap seconds are rare (last one was December 31, 2016)
+ * 2. Advance knowledge from IERS would be required
+ * 3. Most consumer atomic clocks handle this automatically via WWVB signal
+ * 
+ * For production use requiring leap second support, you would need to:
+ * - Monitor IERS Bulletin C announcements
+ * - Update firmware/configuration when leap second is announced
+ * - Set this bit to 1 for the entire month before the leap second
+ * 
+ * @param IsLeap true if leap second will occur at end of current month, false otherwise
+ * @param signal Pointer to 60-byte WWVB signal array to update
+ */
 void setLeapSecond(bool IsLeap, volatile uint8_t *signal)
 {
     // Validate input parameters
@@ -313,6 +548,27 @@ void setLeapSecond(bool IsLeap, volatile uint8_t *signal)
     signal[WWVB_LEAP_SECOND_BIT] = IsLeap ? WWVB_BIT_ONE : WWVB_BIT_ZERO;
 }
 
+/**
+ * @brief Set DST (Daylight Saving Time) indicator bits
+ * 
+ * Positions 57 and 58 encode the current DST status. Both bits must have the same value:
+ * - Both bits = 1: DST is currently in effect
+ * - Both bits = 0: Standard Time is currently in effect
+ * - Mismatch (01 or 10): Invalid/error condition
+ * 
+ * The redundancy (two identical bits) provides error detection. If a receiver
+ * sees mismatched values, it knows the frame is corrupted.
+ * 
+ * DST transitions (US rules since 2007):
+ * - DST begins: 2:00 AM on the second Sunday in March (clocks spring forward to 3:00 AM)
+ * - DST ends: 2:00 AM on the first Sunday in November (clocks fall back to 1:00 AM)
+ * 
+ * During the transition hour, WWVB continues to broadcast the time before the change,
+ * then updates both the time and DST bits at the moment of transition.
+ * 
+ * @param IsDST true if DST is currently in effect, false for Standard Time
+ * @param signal Pointer to 60-byte WWVB signal array to update
+ */
 void setDST(bool IsDST, volatile uint8_t *signal)
 {
     // Validate input parameters

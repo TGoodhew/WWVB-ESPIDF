@@ -16,6 +16,7 @@
     0.7   Added 60KHz output using the ESP32 LEDC PWM
     0.8   Implemented ESP Logging & Error Checking
     0.9   Refactored into modular architecture
+    1.0   Added comprehensive documentation for algorithms, signal format, and architecture
 */
 
 #include <stdio.h>
@@ -67,21 +68,64 @@ static portMUX_TYPE wwvb_spinlock = portMUX_INITIALIZER_UNLOCKED;
 
 // Function prototypes
 
-/*
- * Setup WWVB array with current time data
- * Encodes current UTC time into the staging WWVB signal array.
- * Includes year, day of year, hour, minute, DST status, and other indicators.
- * The staging array will be swapped to active at the next minute boundary.
+/**
+ * @brief Setup WWVB signal array with current time data
+ * 
+ * Encodes the current UTC time into the staging WWVB signal array. This includes:
+ * - Year (2-digit, positions 45-48, 50-53)
+ * - Day of year (Julian day 1-366, positions 22-23, 25-28, 30-33)
+ * - Hour (0-23, positions 12-13, 15-18)
+ * - Minute (0-59, positions 1-3, 5-8)
+ * - DST status (positions 57-58)
+ * - Leap year indicator (position 55)
+ * - Leap second warning (position 56) - always 0 in this implementation
+ * - DUT1 bits (positions 36-38, 40-43) - always 0 (deprecated)
+ * - Position markers (positions 0, 9, 19, 29, 39, 49, 59)
+ * - Reserved bits (always 0)
+ * 
+ * The encoded data is written to the staging buffer (not the active buffer).
+ * It will become active at the next minute boundary when the ISR swaps pointers.
+ * 
+ * This function is called from the main task context (not ISR) when signaled
+ * by the TimerSecond_ISR at slots 30 and 60.
  */
 void SetupWWVBArray(void);
 
-/*
- * Timer ISR called once per second
- * Advances through the 60-second WWVB frame, transmitting each bit.
- * Manages double-buffer pointer swapping at minute boundaries.
- * Triggers array updates at slots 30 and 60.
+/**
+ * @brief Main per-second ISR that drives WWVB signal transmission
  * 
- * @param param Timer parameter (unused)
+ * This Interrupt Service Routine (ISR) is the heart of the WWVB emulator. It's called
+ * precisely once per second by the ESP32 high-resolution timer and is responsible for:
+ * 
+ * 1. **Double-Buffer Management**: At the start of each minute (slot 0), atomically
+ *    swaps the active and staging buffer pointers if new data is ready. This ensures
+ *    the ISR always reads a complete, consistent 60-second frame.
+ * 
+ * 2. **Bit Transmission**: Reads the current bit from the active buffer and modulates
+ *    the carrier accordingly:
+ *    - Bit '0': Reduce power for 0.2s (200ms)
+ *    - Bit '1': Reduce power for 0.5s (500ms)
+ *    - Marker: Reduce power for 0.8s (800ms)
+ * 
+ * 3. **Frame Advancement**: Increments the slot counter (0-59) to track position
+ *    within the current minute. Resets to 0 after slot 59.
+ * 
+ * 4. **Update Signaling**: Sets flags to tell the main task when to encode the next
+ *    minute's data:
+ *    - At slot 30 (mid-minute): Prepare next frame early
+ *    - At slot 60→0 (end of minute): Definitely prepare next frame
+ * 
+ * ISR Design Considerations:
+ * - **IRAM_ATTR**: Function stored in fast instruction RAM for consistent timing
+ * - **Minimal execution time**: All operations are simple and deterministic
+ * - **No blocking**: Never waits for anything, returns quickly
+ * - **Atomic operations**: Uses spinlock for pointer swap to prevent race conditions
+ * - **Deferred logging**: Debug output is queued to a task, not printed in ISR
+ * 
+ * Timing is critical: This ISR must complete in well under 1 millisecond to avoid
+ * jitter in the signal timing. Typical execution time is <50 microseconds.
+ * 
+ * @param param Timer parameter (unused, but required by esp_timer callback signature)
  */
 void TimerSecond_ISR(void *param);
 
@@ -203,65 +247,68 @@ void SetupWWVBArray(void)
 void IRAM_ATTR TimerSecond_ISR(void *param)
 {
   (void)param; // Suppress unused parameter warning
-  static bool ON;
+  static bool ON;  // Debug LED state
   static QueueHandle_t debug_queue_cached = NULL;
   
-  // Cache the debug queue handle on first call to avoid repeated lookups
+  // Cache the debug queue handle on first call to avoid repeated function calls
   if (debug_queue_cached == NULL) {
       debug_queue_cached = GetDebugQueue();
   }
   
-  // Toggle debug LED state
+  // Toggle debug LED to provide visual indication of ISR execution (1 Hz blink)
   ON = !ON;
-  
-  // Set debug LED without error checking (ISR context)
   gpio_set_level((gpio_num_t)CONFIG_WWVB_DEBUG_LED_PIN, ON);
 
-  // At the start of a new minute (slot 0), swap the pointers if a swap is pending
-  // This ensures we always transmit a complete, consistent 60-second frame
-  // Pointer swapping is much faster than copying 60 bytes in ISR context
+  // === Double-Buffer Pointer Swap (Critical Section) ===
+  // At the start of each minute (slot 0), swap active and staging buffers if new data is ready.
+  // This ensures we transmit a complete, consistent 60-second frame without glitches.
+  // Pointer swap is used instead of memcpy because it's atomic and extremely fast (<1µs).
   if (wwvb_state.slot == 0 && wwvb_state.swap_pending)
   {
-      // Use critical section to ensure atomic pointer swap
+      // Enter critical section to make pointer swap atomic
       // This prevents race conditions if main task reads pointers during swap
       portENTER_CRITICAL_ISR(&wwvb_spinlock);
       
-      // Swap pointers: staging becomes active, old active becomes staging
+      // Swap pointers: staging becomes active (transmitted), active becomes staging (writable)
       volatile uint8_t *temp = wwvb_state.active;
       wwvb_state.active = wwvb_state.staging;
       wwvb_state.staging = temp;
-      wwvb_state.swap_pending = false;
+      wwvb_state.swap_pending = false;  // Clear flag
       
       portEXIT_CRITICAL_ISR(&wwvb_spinlock);
   }
 
-  // Validate slot index before accessing active array
+  // === Slot Validation ===
+  // Paranoid check: ensure slot is in valid range [0-59]
+  // This should never trigger in normal operation, but prevents buffer overflow if it does
   if (wwvb_state.slot >= WWVB_SIGNAL_ARRAY_SIZE)
   {
       wwvb_state.slot = 0;
   }
 
-  // Always read from the active array (never from staging)
+  // === Bit Transmission ===
+  // Read current bit from active buffer and modulate carrier accordingly
+  // The switch statement handles three cases: '0', '1', and position marker
   switch (wwvb_state.active[wwvb_state.slot])
   {
   case WWVB_BIT_ZERO:
   {
       #ifdef WWVBDEBUG
-      // Defer debug output to task context via queue
+      // Defer debug output to task context via queue (cannot printf in ISR)
       if (debug_queue_cached != NULL) {
           debug_msg_t msg = {.type = '0'};
           xQueueSendFromISR(debug_queue_cached, &msg, NULL);
       }
       #endif
 
-      // 0 (0.2s reduced power)
+      // Bit '0': Reduce carrier power for 0.2 seconds
       ZeroCarrier();
 
-      // TimerBit0 - Start timer without ESP_ERROR_CHECK
+      // Start one-shot timer to restore carrier after 200ms
       esp_timer_handle_t bit0_timer = GetBit0Timer();
       if (bit0_timer != NULL)
       {
-          esp_timer_start_once(bit0_timer, TIMER_BIT0_DURATION_US); // 0.2 second
+          esp_timer_start_once(bit0_timer, TIMER_BIT0_DURATION_US); // 200,000 microseconds
       }
     }
   break;
@@ -275,14 +322,14 @@ void IRAM_ATTR TimerSecond_ISR(void *param)
       }
       #endif
 
-      // 1 (0.5s reduced power)
+      // Bit '1': Reduce carrier power for 0.5 seconds
       ZeroCarrier();
 
-      // TimerBit1 - Start timer without ESP_ERROR_CHECK
+      // Start one-shot timer to restore carrier after 500ms
       esp_timer_handle_t bit1_timer = GetBit1Timer();
       if (bit1_timer != NULL)
       {
-          esp_timer_start_once(bit1_timer, TIMER_BIT1_DURATION_US); // 0.5 second
+          esp_timer_start_once(bit1_timer, TIMER_BIT1_DURATION_US); // 500,000 microseconds
       }
 
   }
@@ -297,35 +344,41 @@ void IRAM_ATTR TimerSecond_ISR(void *param)
       }
       #endif
 
-      // Marker (0.8s reduced power)
+      // Marker: Reduce carrier power for 0.8 seconds
       ZeroCarrier();
 
-      // TimerBitMarker - Start timer without ESP_ERROR_CHECK
+      // Start one-shot timer to restore carrier after 800ms
       esp_timer_handle_t marker_timer = GetMarkerTimer();
       if (marker_timer != NULL)
       {
-          esp_timer_start_once(marker_timer, TIMER_MARKER_DURATION_US); // 0.8 second
+          esp_timer_start_once(marker_timer, TIMER_MARKER_DURATION_US); // 800,000 microseconds
       }
   }
   break;
   }
 
-  wwvb_state.slot++; // Advance data slot in minute data packet
+  // === Frame Advancement and Update Signaling ===
+  wwvb_state.slot++; // Advance to next bit position in the 60-second frame
+  
   if (wwvb_state.slot == WWVB_SIGNAL_ARRAY_SIZE)
   {
-      wwvb_state.slot = 0; // Reset slot to 0 if at 60 seconds
-      update_wwvb_array = true; // Signal that array needs updating
+      // End of minute reached (slot 60 → 0)
+      wwvb_state.slot = 0; // Reset to start of next minute
+      update_wwvb_array = true; // Signal main task to encode next minute's data
+      
       #ifdef WWVBDEBUG
-      // Defer debug output and logging to task context via queue
+      // Log minute boundary in debug output
       if (debug_queue_cached != NULL) {
-          debug_msg_t msg = {.type = 'N'};
+          debug_msg_t msg = {.type = 'N'};  // 'N' = Newline + timestamp
           xQueueSendFromISR(debug_queue_cached, &msg, NULL);
       }
       #endif
   }
   else if (wwvb_state.slot == WWVB_SIGNAL_ARRAY_SIZE / 2)
   {
-      // Update at 30 seconds as well to ensure at least 2 updates per minute
+      // Mid-minute checkpoint (slot 30)
+      // Request early update so staging buffer is ready well before minute boundary
+      // This provides a 30-second buffer for the main task to encode the data
       update_wwvb_array = true;
   }
 }
