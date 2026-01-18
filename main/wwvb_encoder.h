@@ -14,6 +14,28 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+// WWVB Signal Array Size
+#define WWVB_SIGNAL_ARRAY_SIZE 60
+
+// WWVB Year encoding constants
+#define WWVB_MIN_YEAR 2000
+#define WWVB_MAX_YEAR 2099
+
+// WWVB Day of year constants
+#define WWVB_MIN_DAY_OF_YEAR 1
+#define WWVB_MAX_DAY_OF_YEAR 366
+
+// WWVB Hour constants
+#define WWVB_MAX_HOUR 23
+
+// WWVB Minute constants
+#define WWVB_MAX_MINUTE 59
+
+// WWVB Signal values
+#define WWVB_BIT_ZERO 0
+#define WWVB_BIT_ONE 1
+#define WWVB_BIT_MARKER 2
+
 /*
  * Encode a value in BCD format for WWVB
  * 
@@ -24,71 +46,85 @@ uint16_t BitsEncoder(uint16_t n);
 
 /*
  * Encode year into WWVB signal array (8 bit BCD)
+ * Encodes the year modulo 100 (e.g., 2024 -> 24) into WWVB signal positions.
  * 
- * @param year The year to encode (2000-2099)
- * @param signal The 60-element signal array
+ * @param year The year to encode (WWVB_MIN_YEAR to WWVB_MAX_YEAR)
+ * @param signal The WWVB_SIGNAL_ARRAY_SIZE-element signal array
  */
 void encodeYear(uint16_t year, volatile uint8_t *signal);
 
 /*
  * Encode day of year into WWVB signal array (10 bit BCD)
+ * Encodes the day of year (Julian day) into WWVB signal positions.
  * 
- * @param dayOfYear The day of year (1-366)
- * @param signal The 60-element signal array
+ * @param dayOfYear The day of year (WWVB_MIN_DAY_OF_YEAR to WWVB_MAX_DAY_OF_YEAR)
+ * @param signal The WWVB_SIGNAL_ARRAY_SIZE-element signal array
  */
 void encodeDayOfYear(uint16_t dayOfYear, volatile uint8_t *signal);
 
 /*
  * Encode hour into WWVB signal array (6 bit BCD)
+ * Encodes the hour in 24-hour format into WWVB signal positions.
  * 
- * @param hour The hour (0-23)
- * @param signal The 60-element signal array
+ * @param hour The hour (0 to WWVB_MAX_HOUR)
+ * @param signal The WWVB_SIGNAL_ARRAY_SIZE-element signal array
  */
 void encodeHour(uint8_t hour, volatile uint8_t *signal);
 
 /*
  * Encode minute into WWVB signal array (7 bit BCD)
+ * Encodes the minute value into WWVB signal positions.
  * 
- * @param minute The minute (0-59)
- * @param signal The 60-element signal array
+ * @param minute The minute (0 to WWVB_MAX_MINUTE)
+ * @param signal The WWVB_SIGNAL_ARRAY_SIZE-element signal array
  */
 void encodeMinute(uint8_t minute, volatile uint8_t *signal);
 
 /*
  * Set WWVB markers and always-zero indicators
+ * Sets position markers (at seconds 0, 9, 19, 29, 39, 49, 59) and
+ * fixed-zero bit positions as defined by WWVB protocol.
  * 
- * @param signal The 60-element signal array
+ * @param signal The WWVB_SIGNAL_ARRAY_SIZE-element signal array
  */
 void setMarkersAndIndicators(volatile uint8_t *signal);
 
 /*
  * Set DUT1 bits (obsolete, set to 0)
+ * DUT1 (UT1-UTC difference) is obsolete and no longer used for celestial navigation.
+ * All DUT1 bits are set to zero.
  * 
- * @param signal The 60-element signal array
+ * @param signal The WWVB_SIGNAL_ARRAY_SIZE-element signal array
  */
 void setDUT1(volatile uint8_t *signal);
 
 /*
  * Set leap year indicator
+ * Sets the leap year bit based on whether the year is a leap year.
+ * Uses mktime() to determine if February has 29 days.
  * 
- * @param year The year to check
- * @param signal The 60-element signal array
+ * @param year The year to check (WWVB_MIN_YEAR to WWVB_MAX_YEAR)
+ * @param signal The WWVB_SIGNAL_ARRAY_SIZE-element signal array
  */
 void setLeapYear(uint16_t year, volatile uint8_t *signal);
 
 /*
  * Set leap second indicator
+ * Sets the leap second warning bit. A leap second is occasionally added
+ * to UTC to account for Earth's irregular rotation.
  * 
- * @param IsLeap True if leap second is present
- * @param signal The 60-element signal array
+ * @param IsLeap True if leap second will occur at end of current month
+ * @param signal The WWVB_SIGNAL_ARRAY_SIZE-element signal array
  */
 void setLeapSecond(bool IsLeap, volatile uint8_t *signal);
 
 /*
- * Set DST indicator bits
+ * Set DST (Daylight Saving Time) indicator bits
+ * Sets both DST bits (positions 57 and 58) to indicate whether DST is currently in effect.
+ * Both bits are set to 1 when DST is active, 0 when standard time is in effect.
  * 
- * @param IsDST True if DST is in effect
- * @param signal The 60-element signal array
+ * @param IsDST True if DST is currently in effect
+ * @param signal The WWVB_SIGNAL_ARRAY_SIZE-element signal array
  */
 void setDST(bool IsDST, volatile uint8_t *signal);
 

@@ -14,6 +14,28 @@
 
 #include <stdbool.h>
 
+// Days in month constants
+#define DAYS_IN_JANUARY 31
+#define DAYS_IN_FEBRUARY_NORMAL 28
+#define DAYS_IN_FEBRUARY_LEAP 29
+#define DAYS_IN_MARCH 31
+#define DAYS_IN_APRIL 30
+#define DAYS_IN_MAY 31
+#define DAYS_IN_JUNE 30
+#define DAYS_IN_JULY 31
+#define DAYS_IN_AUGUST 31
+#define DAYS_IN_SEPTEMBER 30
+#define DAYS_IN_OCTOBER 31
+
+// Day of week constants
+#define DOW_SUNDAY 0
+#define DOW_SATURDAY 6
+#define DAYS_PER_WEEK 7
+
+// Zeller's congruence constants
+#define ZELLER_JANUARY_AS_MONTH_13 13
+#define ZELLER_OFFSET_TO_STANDARD 6
+
 /*
  * Determine if a year is a leap year
  * 

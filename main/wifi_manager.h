@@ -11,6 +11,9 @@
 #include <freertos/event_groups.h>
 #include <stdbool.h>
 
+// Service name buffer size (prefix + 6 hex chars + null terminator)
+#define WIFI_SERVICE_NAME_SIZE 12
+
 // WiFi state structure
 typedef struct {
     bool is_provisioned;

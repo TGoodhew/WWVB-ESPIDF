@@ -42,8 +42,8 @@
 // We use two arrays: one active (being transmitted) and one staging (being prepared)
 // This ensures the ISR always reads a complete, consistent 60-second frame
 typedef struct {
-    uint8_t buffer0[60];  // First buffer
-    uint8_t buffer1[60];  // Second buffer
+    uint8_t buffer0[WWVB_SIGNAL_ARRAY_SIZE];  // First buffer
+    uint8_t buffer1[WWVB_SIGNAL_ARRAY_SIZE];  // Second buffer
     volatile uint8_t *active;      // Pointer to array being transmitted by ISR
     volatile uint8_t *staging;     // Pointer to array being prepared for next minute
     volatile uint8_t slot;
@@ -109,7 +109,7 @@ void app_main(void)
     
     // Copy staging to active for initial data before timer starts
     // Use a loop instead of memcpy to respect volatile qualifier
-    for (int i = 0; i < 60; i++) {
+    for (int i = 0; i < WWVB_SIGNAL_ARRAY_SIZE; i++) {
         wwvb_state.active[i] = wwvb_state.staging[i];
     }
     wwvb_state.swap_pending = false; // Reset flag after manual copy
@@ -154,25 +154,26 @@ void SetupWWVBArray(void)
         return;
     }
     
-    // Check for reasonable time values (year should be >= 2000)
-    // If time is before 2000, it likely means time hasn't been synchronized yet
-    if (utcTime->tm_year + 1900 < 2000)
+    // Check for reasonable time values (year should be >= WWVB_MIN_YEAR)
+    // If time is before WWVB_MIN_YEAR, it likely means time hasn't been synchronized yet
+    if (utcTime->tm_year + YEAR_OFFSET_1900 < WWVB_MIN_YEAR)
     {
-        ESP_LOGE("WWVB", "Invalid system time detected (year=%d). Time may not be synchronized.", utcTime->tm_year + 1900);
+        ESP_LOGE("WWVB", "Invalid system time detected (year=%d). Time may not be synchronized.", 
+                 utcTime->tm_year + YEAR_OFFSET_1900);
         return;
     }
 
     // Write to the staging array (not the active array being transmitted)
     // The staging array will become active at the next minute boundary
-    encodeYear(utcTime->tm_year + 1900, wwvb_state.staging);
+    encodeYear(utcTime->tm_year + YEAR_OFFSET_1900, wwvb_state.staging);
     encodeDayOfYear(utcTime->tm_yday + 1, wwvb_state.staging);
     encodeHour(utcTime->tm_hour, wwvb_state.staging);
     encodeMinute(utcTime->tm_min, wwvb_state.staging);
     setMarkersAndIndicators(wwvb_state.staging);
     setDUT1(wwvb_state.staging); // We're ignoring DUT1 as it has been deprecated and not used in this scenario
-    setLeapYear(utcTime->tm_year + 1900, wwvb_state.staging);
+    setLeapYear(utcTime->tm_year + YEAR_OFFSET_1900, wwvb_state.staging);
     setLeapSecond(false, wwvb_state.staging); // Ignore leap seconds in this scenario
-    setDST(isDaylightSavingTime(utcTime->tm_year + 1900, utcTime->tm_yday + 1), wwvb_state.staging);
+    setDST(isDaylightSavingTime(utcTime->tm_year + YEAR_OFFSET_1900, utcTime->tm_yday + 1), wwvb_state.staging);
     
     // Signal that the staging array is ready to be swapped at the next minute boundary
     wwvb_state.swap_pending = true;
@@ -213,7 +214,7 @@ void IRAM_ATTR TimerSecond_ISR(void *param)
   }
 
   // Validate slot index before accessing active array
-  if (wwvb_state.slot >= 60)
+  if (wwvb_state.slot >= WWVB_SIGNAL_ARRAY_SIZE)
   {
       wwvb_state.slot = 0;
   }
@@ -221,7 +222,7 @@ void IRAM_ATTR TimerSecond_ISR(void *param)
   // Always read from the active array (never from staging)
   switch (wwvb_state.active[wwvb_state.slot])
   {
-  case 0:
+  case WWVB_BIT_ZERO:
   {
       #ifdef WWVBDEBUG
       // Defer debug output to task context via queue
@@ -242,7 +243,7 @@ void IRAM_ATTR TimerSecond_ISR(void *param)
       }
     }
   break;
-  case 1:
+  case WWVB_BIT_ONE:
   {
       #ifdef WWVBDEBUG
       // Defer debug output to task context via queue
@@ -264,7 +265,7 @@ void IRAM_ATTR TimerSecond_ISR(void *param)
 
   }
   break;
-  case 2:
+  case WWVB_BIT_MARKER:
   {
       #ifdef WWVBDEBUG
       // Defer debug output to task context via queue
@@ -288,7 +289,7 @@ void IRAM_ATTR TimerSecond_ISR(void *param)
   }
 
   wwvb_state.slot++; // Advance data slot in minute data packet
-  if (wwvb_state.slot == 60)
+  if (wwvb_state.slot == WWVB_SIGNAL_ARRAY_SIZE)
   {
       wwvb_state.slot = 0; // Reset slot to 0 if at 60 seconds
       update_wwvb_array = true; // Signal that array needs updating
@@ -300,7 +301,7 @@ void IRAM_ATTR TimerSecond_ISR(void *param)
       }
       #endif
   }
-  else if (wwvb_state.slot == 30)
+  else if (wwvb_state.slot == WWVB_SIGNAL_ARRAY_SIZE / 2)
   {
       // Update at 30 seconds as well to ensure at least 2 updates per minute
       update_wwvb_array = true;
