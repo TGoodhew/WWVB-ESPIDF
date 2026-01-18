@@ -57,15 +57,15 @@
 #define TIME_STRING_BUFFER_SIZE 64       // Buffer size for time string formatting
 
 // Function Prototypes - I wanted to keep this as a single file if people wanted to grab it and drop it into their projects
-void encodeYear(uint16_t year, uint8_t *signal);
-void encodeDayOfYear(uint16_t dayOfYear, uint8_t *signal);
-void encodeHour(uint8_t hour, uint8_t *signal);
-void encodeMinute(uint8_t minute, uint8_t *signal);
-void setMarkersAndIndicators(uint8_t *signal);
-void setDUT1(uint8_t *signal);
-void setLeapYear(uint16_t year, uint8_t *signal);
-void setLeapSecond(bool IsLeap, uint8_t *signal);
-void setDST(bool IsDST, uint8_t *signal);
+void encodeYear(uint16_t year, volatile uint8_t *signal);
+void encodeDayOfYear(uint16_t dayOfYear, volatile uint8_t *signal);
+void encodeHour(uint8_t hour, volatile uint8_t *signal);
+void encodeMinute(uint8_t minute, volatile uint8_t *signal);
+void setMarkersAndIndicators(volatile uint8_t *signal);
+void setDUT1(volatile uint8_t *signal);
+void setLeapYear(uint16_t year, volatile uint8_t *signal);
+void setLeapSecond(bool IsLeap, volatile uint8_t *signal);
+void setDST(bool IsDST, volatile uint8_t *signal);
 uint16_t BitsEncoder(uint16_t n);
 void TimerSignalReenable_ISR();
 void ZeroCarrier();
@@ -217,7 +217,10 @@ void app_main(void)
     SetupWWVBArray();
     
     // Copy staging to active for initial data before timer starts
-    memcpy(wwvb_state.active, wwvb_state.staging, 60);
+    // Use a loop instead of memcpy to respect volatile qualifier
+    for (int i = 0; i < 60; i++) {
+        wwvb_state.active[i] = wwvb_state.staging[i];
+    }
     wwvb_state.swap_pending = false; // Reset flag after manual copy
 
     ESP_LOGI("SNTP", "Initializing Timers");
@@ -711,7 +714,7 @@ uint16_t BitsEncoder(uint16_t n)
 }
 
 // WWVB Expects year to be in 8 bit BCD - https://en.wikipedia.org/wiki/WWVB#Amplitude-modulated_time_code
-void encodeYear(uint16_t year, uint8_t *signal)
+void encodeYear(uint16_t year, volatile uint8_t *signal)
 {
     // Validate input parameters
     if (signal == NULL)
@@ -740,7 +743,7 @@ void encodeYear(uint16_t year, uint8_t *signal)
 }
 
 // WWVB Expects the day of the year to be in 10 bit BCD - https://en.wikipedia.org/wiki/WWVB#Amplitude-modulated_time_code
-void encodeDayOfYear(uint16_t dayOfYear, uint8_t *signal)
+void encodeDayOfYear(uint16_t dayOfYear, volatile uint8_t *signal)
 {
     // Validate input parameters
     if (signal == NULL)
@@ -770,7 +773,7 @@ void encodeDayOfYear(uint16_t dayOfYear, uint8_t *signal)
 }
 
 // WWVB Expects the hour to be in 6 bit BCD - https://en.wikipedia.org/wiki/WWVB#Amplitude-modulated_time_code
-void encodeHour(uint8_t hour, uint8_t *signal)
+void encodeHour(uint8_t hour, volatile uint8_t *signal)
 {
     // Validate input parameters
     if (signal == NULL)
@@ -796,7 +799,7 @@ void encodeHour(uint8_t hour, uint8_t *signal)
 }
 
 // WWVB Expects minutes to be in 7 bit BCD - https://en.wikipedia.org/wiki/WWVB#Amplitude-modulated_time_code
-void encodeMinute(uint8_t minute, uint8_t *signal)
+void encodeMinute(uint8_t minute, volatile uint8_t *signal)
 {
     // Validate input parameters
     if (signal == NULL)
@@ -823,7 +826,7 @@ void encodeMinute(uint8_t minute, uint8_t *signal)
 }
 
 // The WWVB signal has certain marker and bits that are always set to either a marker bit or a zero
-void setMarkersAndIndicators(uint8_t *signal)
+void setMarkersAndIndicators(volatile uint8_t *signal)
 {
     // Validate input parameters
     if (signal == NULL)
@@ -854,7 +857,7 @@ void setMarkersAndIndicators(uint8_t *signal)
 }
 
 // WWVB once supported celestial navigation uses but as it was deprecated and this scenario doesn't need it then just set those bits to 0 - https://en.wikipedia.org/wiki/WWVB#Amplitude-modulated_time_code
-void setDUT1(uint8_t *signal)
+void setDUT1(volatile uint8_t *signal)
 {
     // Validate input parameters
     if (signal == NULL)
@@ -875,7 +878,7 @@ void setDUT1(uint8_t *signal)
 
 // If you use the current year and mktime to set a date it will tell you if it is a leap year or not
 // I can't find where I got this code from so apologies for not crediting it to the appropriate person
-void setLeapYear(uint16_t year, uint8_t *signal)
+void setLeapYear(uint16_t year, volatile uint8_t *signal)
 {
     // Validate input parameters
     if (signal == NULL)
@@ -905,7 +908,7 @@ void setLeapYear(uint16_t year, uint8_t *signal)
 }
 
 // WWVB Expects this bit for a leap second, I don't believe it is useful in this scenario but setting it just in case - https://en.wikipedia.org/wiki/WWVB#Amplitude-modulated_time_code
-void setLeapSecond(bool IsLeap, uint8_t *signal)
+void setLeapSecond(bool IsLeap, volatile uint8_t *signal)
 {
     // Validate input parameters
     if (signal == NULL)
@@ -921,7 +924,7 @@ void setLeapSecond(bool IsLeap, uint8_t *signal)
 }
 
 // WWVB Expects to have a DST bit set - It allows for warning of DST but we're ignoring that in this scenario - https://en.wikipedia.org/wiki/WWVB#Amplitude-modulated_time_code
-void setDST(bool IsDST, uint8_t *signal)
+void setDST(bool IsDST, volatile uint8_t *signal)
 {
     // Validate input parameters
     if (signal == NULL)
