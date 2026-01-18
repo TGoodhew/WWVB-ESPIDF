@@ -253,17 +253,24 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
     } 
     else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) 
     {
-        if (wifi_state.retry_count < CONFIG_WIFI_MAX_RETRY) 
+        /* Only retry connection if we have credentials (are provisioned).
+         * During provisioning, disconnects should not trigger reconnection attempts.
+         */
+        if (wifi_state.is_provisioned && wifi_state.retry_count < CONFIG_WIFI_MAX_RETRY) 
         {
             ESP_ERROR_CHECK(esp_wifi_connect());
             wifi_state.retry_count++;
             ESP_LOGI("WiFi", "retry to connect to the AP");
         } 
+        else if (!wifi_state.is_provisioned)
+        {
+            ESP_LOGW("WiFi", "Disconnected but not provisioned yet, waiting for provisioning");
+        }
         else 
         {
             xEventGroupSetBits(wifi_state.event_group, WIFI_FAIL_BIT);
+            ESP_LOGE("WiFi", "connect to the AP failed after %d retries", CONFIG_WIFI_MAX_RETRY);
         }
-        ESP_LOGI("WiFi", "connect to the AP fail");
     } 
     else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) 
     {
