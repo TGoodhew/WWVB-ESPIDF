@@ -41,10 +41,6 @@ static QueueHandle_t debug_queue = NULL;
 extern void TimerSecond_ISR(void *param);
 extern void TimerSignalReenable_ISR(void);
 
-// Forward declarations
-static void timer_signal_reenable_isr(void);
-static void timer_second_isr(void *param);
-
 QueueHandle_t GetDebugQueue(void)
 {
     return debug_queue;
