@@ -23,9 +23,6 @@
 
 // Debug queue for ISR to task communication
 #define DEBUG_QUEUE_SIZE 10
-typedef struct {
-    char type;  // '0', '1', 'M', or 'N' for newline/time log
-} debug_msg_t;
 
 /*
  * Setup the 60 kHz PWM output
@@ -50,6 +47,12 @@ void StartSecondTimer(void);
  * Used during reduced power periods
  */
 void ZeroCarrier(void);
+
+/*
+ * Timer ISR to re-enable the carrier signal
+ * Called after bit/marker reduced power period
+ */
+void TimerSignalReenable_ISR(void);
 
 /*
  * Debug task to handle logging from ISR context

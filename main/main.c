@@ -64,10 +64,14 @@ static volatile bool update_wwvb_array = false;
 // Spinlock for protecting pointer swap in ISR
 static portMUX_TYPE wwvb_spinlock = portMUX_INITIALIZER_UNLOCKED;
 
+// Debug message type for ISR to task communication
+typedef struct {
+    char type;  // '0', '1', 'M', or 'N' for newline/time log
+} debug_msg_t;
+
 // Function prototypes
 void SetupWWVBArray(void);
 void TimerSecond_ISR(void *param);
-void TimerSignalReenable_ISR(void);
 
 void app_main(void)
 {
@@ -182,6 +186,13 @@ void IRAM_ATTR TimerSecond_ISR(void *param)
 {
   (void)param; // Suppress unused parameter warning
   static bool ON;
+  static QueueHandle_t debug_queue_cached = NULL;
+  
+  // Cache the debug queue handle on first call
+  if (debug_queue_cached == NULL) {
+      debug_queue_cached = GetDebugQueue();
+  }
+  
   ON = !ON;
   
   // Remove ESP_ERROR_CHECK - just call the function directly
@@ -218,10 +229,9 @@ void IRAM_ATTR TimerSecond_ISR(void *param)
   {
       #ifdef WWVBDEBUG
       // Defer debug output to task context via queue
-      QueueHandle_t debug_queue = GetDebugQueue();
-      if (debug_queue != NULL) {
+      if (debug_queue_cached != NULL) {
           debug_msg_t msg = {.type = '0'};
-          xQueueSendFromISR(debug_queue, &msg, NULL);
+          xQueueSendFromISR(debug_queue_cached, &msg, NULL);
       }
       #endif
 
@@ -240,10 +250,9 @@ void IRAM_ATTR TimerSecond_ISR(void *param)
   {
       #ifdef WWVBDEBUG
       // Defer debug output to task context via queue
-      QueueHandle_t debug_queue = GetDebugQueue();
-      if (debug_queue != NULL) {
+      if (debug_queue_cached != NULL) {
           debug_msg_t msg = {.type = '1'};
-          xQueueSendFromISR(debug_queue, &msg, NULL);
+          xQueueSendFromISR(debug_queue_cached, &msg, NULL);
       }
       #endif
 
@@ -263,10 +272,9 @@ void IRAM_ATTR TimerSecond_ISR(void *param)
   {
       #ifdef WWVBDEBUG
       // Defer debug output to task context via queue
-      QueueHandle_t debug_queue = GetDebugQueue();
-      if (debug_queue != NULL) {
+      if (debug_queue_cached != NULL) {
           debug_msg_t msg = {.type = 'M'};
-          xQueueSendFromISR(debug_queue, &msg, NULL);
+          xQueueSendFromISR(debug_queue_cached, &msg, NULL);
       }
       #endif
 
@@ -290,10 +298,9 @@ void IRAM_ATTR TimerSecond_ISR(void *param)
       update_wwvb_array = true; // Signal that array needs updating
       #ifdef WWVBDEBUG
       // Defer debug output and logging to task context via queue
-      QueueHandle_t debug_queue = GetDebugQueue();
-      if (debug_queue != NULL) {
+      if (debug_queue_cached != NULL) {
           debug_msg_t msg = {.type = 'N'};
-          xQueueSendFromISR(debug_queue, &msg, NULL);
+          xQueueSendFromISR(debug_queue_cached, &msg, NULL);
       }
       #endif
   }

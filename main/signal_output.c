@@ -37,9 +37,13 @@ static ledc_channel_config_t ledc_channel;
 // Debug queue for ISR to task communication
 static QueueHandle_t debug_queue = NULL;
 
+// Debug message type for ISR to task communication
+typedef struct {
+    char type;  // '0', '1', 'M', or 'N' for newline/time log
+} debug_msg_t;
+
 // External references to WWVB state (defined in main.c)
 extern void TimerSecond_ISR(void *param);
-extern void TimerSignalReenable_ISR(void);
 
 QueueHandle_t GetDebugQueue(void)
 {
