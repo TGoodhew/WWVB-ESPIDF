@@ -6,6 +6,7 @@
       "DOCKER_TAG": "v5.5.2"
     }
   },
+
   "customizations": {
     "vscode": {
       "settings": {
@@ -22,5 +23,13 @@
     }
   },
 
-  "runArgs": []
+  "runArgs": [
+    "--privileged",
+    "--device=/dev/ttyUSB0",
+    "--device=/dev/ttyACM0"
+  ],
+
+  "containerEnv": {
+    "UDEV": "1"
+  }
 }
