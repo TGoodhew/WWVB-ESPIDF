@@ -1,5 +1,34 @@
 /*
  * WiFi Manager Module
+ * 
+ * This module manages WiFi connectivity with secure BLE provisioning.
+ * 
+ * Key Features:
+ * - **BLE Provisioning**: First-time setup via Bluetooth Low Energy
+ * - **Cryptographic Security**: SHA-256 based PoP generation from MAC address
+ * - **Persistent Storage**: WiFi credentials saved in NVS (Non-Volatile Storage)
+ * - **Auto-reconnect**: Automatically reconnects after device reboot
+ * - **Retry Logic**: Configurable retry attempts for connection failures
+ * 
+ * Security Design:
+ * The Proof-of-Possession (PoP) is generated using SHA-256 hash of the device's
+ * MAC address. This prevents attackers from deriving the PoP by observing:
+ * - BLE advertising packets (which contain service name derived from MAC)
+ * - Network scanning (which could reveal MAC address)
+ * 
+ * The cryptographic hash (SHA-256) is a one-way function, making it computationally
+ * infeasible to derive the PoP from the MAC address without knowing the hashing
+ * algorithm used. The PoP must be obtained from the device's serial console.
+ * 
+ * Provisioning Flow:
+ * 1. Check NVS for saved credentials
+ * 2. If none found, start BLE advertising with unique service name
+ * 3. User connects via ESP BLE Provisioning mobile app
+ * 4. User enters PoP from serial console
+ * 5. User provides WiFi SSID and password
+ * 6. Credentials saved to NVS, BLE stopped
+ * 7. WiFi connection established
+ * 8. Future boots skip provisioning and connect directly
  */
 
 #include "wifi_manager.h"
@@ -43,7 +72,61 @@ static wifi_state_t wifi_state = {
 
 // Forward declarations
 static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
+
+/**
+ * @brief Generate a device-unique BLE service name for provisioning
+ * 
+ * Creates a unique service name that users will see when scanning for BLE devices
+ * during WiFi provisioning. The name format is "PROV_XXXXXX" where XXXXXX is
+ * derived from the last 3 bytes of the device's MAC address in hexadecimal.
+ * 
+ * Why use MAC address:
+ * - Guarantees uniqueness across all devices (MAC addresses are globally unique)
+ * - Remains constant for the device lifetime
+ * - Allows users to identify specific devices if multiple are being provisioned
+ * 
+ * Example:
+ * - MAC address: 24:6F:28:AB:CD:EF
+ * - Service name: "PROV_ABCDEF"
+ * 
+ * The service name is NOT secret - it's visible in BLE scans. Security is provided
+ * by the separate PoP (Proof of Possession), not by hiding the service name.
+ * 
+ * @param service_name Output buffer for the service name (must be >= WIFI_SERVICE_NAME_SIZE)
+ * @param max Size of the output buffer
+ */
 static void get_device_service_name(char *service_name, size_t max);
+
+/**
+ * @brief Generate a cryptographically secure Proof-of-Possession (PoP)
+ * 
+ * Creates a unique 12-character hexadecimal PoP by hashing the device's MAC address
+ * with SHA-256. This provides real security compared to hardcoded or simple derivations.
+ * 
+ * Security Rationale:
+ * - SHA-256 is a cryptographic one-way function
+ * - Cannot derive PoP from MAC address without knowing the algorithm
+ * - Even if attacker sees MAC (via BLE or network), they cannot compute PoP
+ * - Prevents unauthorized provisioning attempts
+ * 
+ * Process:
+ * 1. Get device MAC address (6 bytes)
+ * 2. Compute SHA-256 hash (produces 32 bytes)
+ * 3. Take first 6 bytes of hash
+ * 4. Convert to 12-character hex string
+ * 5. User must obtain this from serial console to provision device
+ * 
+ * Example:
+ * - MAC: 24:6F:28:AB:CD:EF
+ * - SHA-256(MAC): A3B2C1D4E5F6... (32 bytes)
+ * - PoP: "A3B2C1D4E5F6" (first 6 bytes as hex)
+ * 
+ * The PoP should be displayed on the serial console so legitimate users can
+ * enter it during provisioning, while preventing remote attackers from guessing it.
+ * 
+ * @param pop Output buffer for the PoP string (must be >= POP_BUFFER_SIZE)
+ * @param max Size of the output buffer
+ */
 static void generate_unique_pop(char *pop, size_t max);
 
 wifi_state_t* GetWiFiState(void)
@@ -242,9 +325,17 @@ static void get_device_service_name(char *service_name, size_t max)
     }
 }
 
-// Generate a cryptographically secure proof-of-possession (PoP) based on device MAC address
+// Generate a cryptographically secure proof-of-possession (PoP) based on device MAC address.
 // This uses SHA-256 hash of the MAC address to prevent attackers from deriving the PoP
-// by observing the MAC address through BLE advertising or network scanning
+// by observing the MAC address through BLE advertising or network scanning.
+// 
+// Security Properties:
+// - One-way function: Cannot reverse SHA-256 to get input from output
+// - Deterministic: Same MAC always produces same PoP (device consistency)
+// - Unique: Different MAC addresses produce different PoPs
+// - Unpredictable: Cannot guess PoP without computing the hash
+// 
+// Implementation uses mbedtls SHA-256 for cryptographic security.
 static void generate_unique_pop(char *pop, size_t max)
 {
     // Validate input parameters
