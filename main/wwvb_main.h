@@ -7,6 +7,8 @@
 #ifndef WWVB_MAIN_H
 #define WWVB_MAIN_H
 
+#include <stdbool.h>
+
 /*
  * Setup WWVB signal array with current time data
  * 
@@ -16,8 +18,10 @@
  * 
  * Called from:
  * - Main loop - Periodic updates when signaled by ISR
+ * 
+ * @return true if encoding succeeded, false if time validation failed
  */
-void SetupWWVBArray(void);
+bool SetupWWVBArray(void);
 
 /*
  * Initialize WWVB active buffer before timer starts
@@ -33,7 +37,9 @@ void SetupWWVBArray(void);
  * 
  * Called from:
  * - SNTP_callback() - Initial setup after time sync, before timer starts
+ * 
+ * @return true if initialization succeeded, false if time encoding failed
  */
-void InitializeWWVBBuffer(void);
+bool InitializeWWVBBuffer(void);
 
 #endif // WWVB_MAIN_H

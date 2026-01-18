@@ -88,8 +88,10 @@ static portMUX_TYPE wwvb_spinlock = portMUX_INITIALIZER_UNLOCKED;
  * 
  * This function is called from the main task context (not ISR) when signaled
  * by the TimerSecond_ISR at slots 30 and 60.
+ * 
+ * @return true if encoding succeeded, false if time validation failed
  */
-void SetupWWVBArray(void);
+bool SetupWWVBArray(void);
 
 /**
  * @brief Initialize WWVB active buffer before timer starts
@@ -102,8 +104,10 @@ void SetupWWVBArray(void);
  * 
  * This ensures the first transmitted frame contains valid time data rather
  * than all zeros. Must be called after SNTP sync but before StartSecondTimer().
+ * 
+ * @return true if initialization succeeded, false if time encoding failed
  */
-void InitializeWWVBBuffer(void);
+bool InitializeWWVBBuffer(void);
 
 /**
  * @brief Main per-second ISR that drives WWVB signal transmission
@@ -181,8 +185,9 @@ void app_main(void)
     // Note: We do NOT call SetupWWVBArray() here because the system time
     // has not been synchronized yet via SNTP. Calling it now would result
     // in an invalid time check failure, leaving the buffer as all zeros.
-    // Instead, SetupWWVBArray() will be called from SNTP_callback() after
-    // time synchronization completes and before the timer starts.
+    // Instead, SNTP_callback() will call InitializeWWVBBuffer(), which in turn
+    // invokes SetupWWVBArray() after time synchronization completes and before
+    // the timer starts.
 
     ESP_LOGI("SignalOutput", "Initializing Timers");
 
@@ -211,7 +216,7 @@ void app_main(void)
     }
 }
 
-void SetupWWVBArray(void)
+bool SetupWWVBArray(void)
 {
     time_t rawtime;
     struct tm *utcTime;
@@ -223,7 +228,7 @@ void SetupWWVBArray(void)
     if (utcTime == NULL)
     {
         ESP_LOGE("WWVB", "Failed to get UTC time, gmtime returned NULL");
-        return;
+        return false;
     }
     
     // Check for reasonable time values (year should be >= WWVB_MIN_YEAR)
@@ -232,7 +237,7 @@ void SetupWWVBArray(void)
     {
         ESP_LOGE("WWVB", "Invalid system time detected (year=%d). Time may not be synchronized.", 
                  utcTime->tm_year + YEAR_OFFSET_1900);
-        return;
+        return false;
     }
 
     // Write to the staging array (not the active array being transmitted)
@@ -249,12 +254,18 @@ void SetupWWVBArray(void)
     
     // Signal that the staging array is ready to be swapped at the next minute boundary
     wwvb_state.swap_pending = true;
+    
+    return true;
 }
 
-void InitializeWWVBBuffer(void)
+bool InitializeWWVBBuffer(void)
 {
     // Encode current time into staging buffer
-    SetupWWVBArray();
+    if (!SetupWWVBArray())
+    {
+        ESP_LOGE("WWVB", "Failed to initialize WWVB buffer: time encoding failed");
+        return false;
+    }
     
     // Copy staging to active for initial data before timer starts
     // Use a loop instead of memcpy to respect volatile qualifier
@@ -267,6 +278,8 @@ void InitializeWWVBBuffer(void)
     wwvb_state.swap_pending = false;
     
     ESP_LOGI("WWVB", "Initial WWVB buffer initialized with current time");
+    
+    return true;
 }
 
 void IRAM_ATTR TimerSecond_ISR(void *param)

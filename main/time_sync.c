@@ -37,6 +37,7 @@
 #define COARSE_POLL_INTERVAL_MS 1000     // Polling interval when far from boundary (1 second)
 #define FINE_POLL_INTERVAL_MS 100        // Polling interval when close to boundary (100ms)
 #define ERROR_RETRY_INTERVAL_MS 100      // Polling interval for error recovery during boundary wait
+#define BOUNDARY_SYNC_TASK_STACK_SIZE 4096  // Stack size for minute boundary synchronization task
 
 // WWVB related
 static const char *ntpServer = CONFIG_WWVB_NTP_SERVER;
@@ -110,49 +111,32 @@ void SetupSNTP(void)
 }
 
 /**
- * @brief SNTP synchronization success callback
+ * @brief Task to synchronize WWVB transmission start to minute boundary
  * 
- * This callback is invoked by the SNTP subsystem when time synchronization
- * completes successfully. It's the trigger point that starts the WWVB signal
- * generation, ensuring we only begin transmitting after we have accurate time.
+ * This task waits for the next minute boundary (tm_sec == 0) before initializing
+ * the WWVB buffer and starting the signal transmission. Running in a separate task
+ * prevents blocking the SNTP callback and other system operations.
  * 
- * The callback:
- * 1. Logs the successful synchronization event
- * 2. Waits for the next minute boundary (tm_sec == 0) to align transmission
- * 3. Initializes the WWVB buffer with current time data
- * 4. Starts the 1 Hz second timer at the minute boundary
- * 5. Initiates the continuous WWVB signal transmission cycle
+ * The task:
+ * 1. Waits for the next minute boundary with adaptive polling
+ * 2. Initializes the WWVB buffer with current time
+ * 3. Starts the second timer to begin transmission
+ * 4. Deletes itself after completion
  * 
- * Minute Boundary Synchronization:
- * The WWVB signal frame is transmitted over a full minute (60 seconds).
- * To ensure atomic clocks receive accurate time, we must start transmitting
- * at the exact beginning of a minute (when seconds == 0). This alignment is
- * critical for proper time synchronization.
- * 
- * Note: This implementation transmits minute M during the interval M:00-M:59.
- * Some WWVB specifications indicate the frame should represent M+1, but this
- * implementation maintains consistency by using the current minute.
- * 
- * After this callback, the system enters its steady-state operation:
- * - Second timer fires every second
- * - ISR reads and transmits bits from the WWVB frame
- * - Main task updates the frame buffer twice per minute
- * - SNTP continues periodic re-synchronization in the background
- * 
- * @param tv Pointer to timeval structure with the synchronized time
+ * @param pvParameters Task parameters (unused)
  */
-void SNTP_callback(struct timeval *tv)
+static void minute_boundary_sync_task(void *pvParameters)
 {
-    ESP_LOGI("SNTP", "SNTP Synchronized - System time is now accurate");
+    (void)pvParameters;  // Suppress unused parameter warning
     
-    // Wait for the next minute boundary (when tm_sec == 0) to start transmission
-    // This ensures the WWVB signal frame aligns with actual UTC minute boundaries
-    // Note: Per current implementation, the frame transmitted during minute M
-    // contains the time M (not M+1 as per strict WWVB spec interpretation)
+    ESP_LOGI("SNTP", "Minute boundary synchronization task started");
     ESP_LOGI("SNTP", "Waiting for next minute boundary to start WWVB transmission...");
     
     // Brief initial delay to avoid excessive system calls immediately after SNTP sync
     vTaskDelay(pdMS_TO_TICKS(FINE_POLL_INTERVAL_MS));
+    
+    time_t boundary_time = 0;
+    struct tm boundary_tm = {0};
     
     while (true)
     {
@@ -174,6 +158,10 @@ void SNTP_callback(struct timeval *tv)
         // Check if we're at the start of a minute (second 0)
         if (current_second == 0)
         {
+            // Capture the exact boundary time to minimize race conditions
+            boundary_time = rawtime;
+            boundary_tm = *utcTime;
+            
             ESP_LOGI("SNTP", "Minute boundary reached at %02d:%02d:%02d UTC", 
                      utcTime->tm_hour, utcTime->tm_min, utcTime->tm_sec);
             break;
@@ -190,17 +178,78 @@ void SNTP_callback(struct timeval *tv)
     }
     
     // Now we're at the start of a minute - initialize the buffer with current time
-    // This buffer will represent the current minute that just started
     // Note: Per current implementation, we encode the current minute (M) to be
-    // transmitted during minute M. Some WWVB specs indicate the frame should
-    // represent M+1, but this implementation uses M for consistency.
-    InitializeWWVBBuffer();
+    // transmitted during minute M. The official WWVB specification indicates the
+    // frame should represent M+1 (the upcoming minute), but this implementation
+    // uses M for internal consistency with the existing encoding logic.
+    // 
+    // To fully comply with WWVB spec, the encoding functions would need to be
+    // modified to encode (minute + 1) % 60, with proper handling of hour/day rollover.
+    if (!InitializeWWVBBuffer())
+    {
+        ESP_LOGE("SNTP", "Failed to initialize WWVB buffer at minute boundary");
+        ESP_LOGE("SNTP", "WWVB transmission will not start - system time may still be invalid");
+        vTaskDelete(NULL);  // Delete task and exit
+        return;
+    }
     
     // Start the second timer to begin WWVB signal generation
     // The timer will fire at second 1, 2, 3... of this minute
     StartSecondTimer();
     
     ESP_LOGI("SNTP", "WWVB signal transmission started at minute boundary");
+    
+    // Task has completed its work, delete itself
+    vTaskDelete(NULL);
+}
+
+/**
+ * @brief SNTP synchronization success callback
+ * 
+ * This callback is invoked by the SNTP subsystem when time synchronization
+ * completes successfully. It creates a separate task to handle minute boundary
+ * synchronization, allowing this callback to return quickly without blocking
+ * the SNTP subsystem or other system operations.
+ * 
+ * The callback:
+ * 1. Logs the successful synchronization event
+ * 2. Creates a task to wait for minute boundary and start WWVB transmission
+ * 3. Returns immediately to avoid blocking the SNTP task
+ * 
+ * After the separate task completes, the system enters its steady-state operation:
+ * - Second timer fires every second
+ * - ISR reads and transmits bits from the WWVB frame
+ * - Main task updates the frame buffer twice per minute
+ * - SNTP continues periodic re-synchronization in the background
+ * 
+ * @param tv Pointer to timeval structure with the synchronized time
+ */
+void SNTP_callback(struct timeval *tv)
+{
+    (void)tv;  // Suppress unused parameter warning
+    
+    ESP_LOGI("SNTP", "SNTP Synchronized - System time is now accurate");
+    
+    // Create a dedicated task to handle minute boundary synchronization
+    // This prevents blocking the SNTP callback which runs in SNTP task context
+    BaseType_t task_created = xTaskCreate(
+        minute_boundary_sync_task,        // Task function
+        "wwvb_sync",                      // Task name
+        BOUNDARY_SYNC_TASK_STACK_SIZE,   // Stack size (bytes)
+        NULL,                             // Task parameters
+        5,                                // Priority (moderate priority)
+        NULL                              // Task handle (not needed)
+    );
+    
+    if (task_created != pdPASS)
+    {
+        ESP_LOGE("SNTP", "Failed to create minute boundary synchronization task");
+        ESP_LOGE("SNTP", "WWVB transmission will not start automatically");
+    }
+    else
+    {
+        ESP_LOGI("SNTP", "Minute boundary synchronization task created successfully");
+    }
 }
 
 /**
