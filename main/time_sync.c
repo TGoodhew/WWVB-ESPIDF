@@ -118,10 +118,14 @@ void SetupSNTP(void)
  * 5. Initiates the continuous WWVB signal transmission cycle
  * 
  * Minute Boundary Synchronization:
- * The WWVB signal frame represents a specific minute (the minute that will
- * begin 1 minute from now). To ensure atomic clocks receive accurate time,
- * we must start transmitting at the exact beginning of a minute (when seconds == 0).
- * This alignment is critical for proper time synchronization.
+ * The WWVB signal frame is transmitted over a full minute (60 seconds).
+ * To ensure atomic clocks receive accurate time, we must start transmitting
+ * at the exact beginning of a minute (when seconds == 0). This alignment is
+ * critical for proper time synchronization.
+ * 
+ * Note: This implementation transmits minute M during the interval M:00-M:59.
+ * Some WWVB specifications indicate the frame should represent M+1, but this
+ * implementation maintains consistency by using the current minute.
  * 
  * After this callback, the system enters its steady-state operation:
  * - Second timer fires every second
@@ -137,6 +141,8 @@ void SNTP_callback(struct timeval *tv)
     
     // Wait for the next minute boundary (when tm_sec == 0) to start transmission
     // This ensures the WWVB signal frame aligns with actual UTC minute boundaries
+    // Note: Per current implementation, the frame transmitted during minute M
+    // contains the time M (not M+1 as per strict WWVB spec interpretation)
     ESP_LOGI("SNTP", "Waiting for next minute boundary to start WWVB transmission...");
     
     time_t rawtime;
@@ -174,7 +180,10 @@ void SNTP_callback(struct timeval *tv)
     }
     
     // Now we're at the start of a minute - initialize the buffer with current time
-    // This buffer will represent the CURRENT minute that just started
+    // This buffer will represent the current minute that just started
+    // Note: Per current implementation, we encode the current minute (M) to be
+    // transmitted during minute M. Some WWVB specs indicate the frame should
+    // represent M+1, but this implementation uses M for consistency.
     InitializeWWVBBuffer();
     
     // Start the second timer to begin WWVB signal generation
