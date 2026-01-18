@@ -36,6 +36,7 @@
 #define BOUNDARY_POLLING_THRESHOLD_SECONDS 5  // Switch to fine polling when within this many seconds of boundary
 #define COARSE_POLL_INTERVAL_MS 1000     // Polling interval when far from boundary (1 second)
 #define FINE_POLL_INTERVAL_MS 100        // Polling interval when close to boundary (100ms)
+#define ERROR_RETRY_INTERVAL_MS 100      // Polling interval for error recovery during boundary wait
 
 // WWVB related
 static const char *ntpServer = CONFIG_WWVB_NTP_SERVER;
@@ -150,6 +151,9 @@ void SNTP_callback(struct timeval *tv)
     // contains the time M (not M+1 as per strict WWVB spec interpretation)
     ESP_LOGI("SNTP", "Waiting for next minute boundary to start WWVB transmission...");
     
+    // Brief initial delay to avoid excessive system calls immediately after SNTP sync
+    vTaskDelay(pdMS_TO_TICKS(FINE_POLL_INTERVAL_MS));
+    
     while (true)
     {
         time_t rawtime;
@@ -161,7 +165,7 @@ void SNTP_callback(struct timeval *tv)
         if (utcTime == NULL)
         {
             ESP_LOGE("SNTP", "Failed to get UTC time, gmtime returned NULL");
-            vTaskDelay(pdMS_TO_TICKS(FINE_POLL_INTERVAL_MS)); // Wait and retry
+            vTaskDelay(pdMS_TO_TICKS(ERROR_RETRY_INTERVAL_MS)); // Wait and retry
             continue;
         }
         
