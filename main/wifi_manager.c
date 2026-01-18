@@ -237,7 +237,19 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
 {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) 
     {
-        ESP_ERROR_CHECK(esp_wifi_connect());
+        /* Only connect if we're already provisioned and have credentials.
+         * During provisioning, WiFi will be started but we should wait for
+         * WIFI_PROV_CRED_SUCCESS event before attempting to connect.
+         */
+        if (wifi_state.is_provisioned) 
+        {
+            ESP_LOGI("WiFi", "WiFi started, connecting to configured AP");
+            ESP_ERROR_CHECK(esp_wifi_connect());
+        }
+        else
+        {
+            ESP_LOGI("WiFi", "WiFi started, waiting for provisioning to complete");
+        }
     } 
     else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) 
     {
@@ -284,6 +296,10 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
             }
             case WIFI_PROV_CRED_SUCCESS:
                 ESP_LOGI("WiFi", "Provisioning successful");
+                /* Credentials have been received and validated. Now we can connect.
+                 * Note: WiFi is already started at this point from the provisioning process.
+                 * The provisioning manager handles WiFi configuration internally.
+                 */
                 break;
             case WIFI_PROV_END:
                 /* De-initialize manager once provisioning is finished */
