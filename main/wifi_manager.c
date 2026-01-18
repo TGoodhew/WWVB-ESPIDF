@@ -19,6 +19,7 @@
 // Service name prefix for BLE provisioning
 #define SERVICE_NAME_PREFIX "PROV_"
 #define SERVICE_NAME_PREFIX_LEN 5
+#define SERVICE_NAME_EXPECTED_LENGTH 11  // 5 prefix + 6 hex chars
 
 // MAC address size
 #define MAC_ADDRESS_SIZE 6
@@ -29,6 +30,7 @@
 
 // Number of hash bytes used for PoP generation
 #define POP_HASH_BYTES 6
+#define POP_EXPECTED_LENGTH 12  // 6 bytes * 2 hex chars
 
 const int WIFI_CONNECTED_BIT = BIT0;
 const int WIFI_FAIL_BIT = BIT1;
@@ -231,10 +233,11 @@ static void get_device_service_name(char *service_name, size_t max)
     const int result = snprintf(service_name, max, "%s%02X%02X%02X",
                                 SERVICE_NAME_PREFIX, eth_mac[3], eth_mac[4], eth_mac[5]);
     
-    // Verify snprintf success (result should be 11: 5 prefix + 6 hex chars)
+    // Verify snprintf success (result should be SERVICE_NAME_EXPECTED_LENGTH)
     if (result < 0 || result >= (int)max)
     {
-        ESP_LOGE("WiFi", "get_device_service_name: snprintf failed or truncated (result=%d)", result);
+        ESP_LOGE("WiFi", "get_device_service_name: snprintf failed or truncated (result=%d, expected=%d)", 
+                 result, SERVICE_NAME_EXPECTED_LENGTH);
         service_name[0] = '\0';
     }
 }
@@ -298,10 +301,11 @@ static void generate_unique_pop(char *pop, size_t max)
     const int result = snprintf(pop, max, "%02X%02X%02X%02X%02X%02X",
                                 hash[0], hash[1], hash[2], hash[3], hash[4], hash[5]);
     
-    // Verify snprintf success (result should be 12: 6 bytes * 2 hex chars each)
+    // Verify snprintf success (result should be POP_EXPECTED_LENGTH)
     if (result < 0 || result >= (int)max)
     {
-        ESP_LOGE("WiFi", "generate_unique_pop: snprintf failed or truncated (result=%d)", result);
+        ESP_LOGE("WiFi", "generate_unique_pop: snprintf failed or truncated (result=%d, expected=%d)", 
+                 result, POP_EXPECTED_LENGTH);
         pop[0] = '\0';
     }
 }

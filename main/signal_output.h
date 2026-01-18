@@ -18,7 +18,7 @@
 // PWM Constants
 #define PWM_RESOLUTION_BITS 8                               // 8-bit PWM resolution (0-255)
 #define PWM_MAX_VALUE ((1 << PWM_RESOLUTION_BITS) - 1)     // Maximum PWM value (255)
-#define PWM_DUTY_CYCLE_50_PERCENT (PWM_MAX_VALUE / 2)      // 50% duty cycle
+#define PWM_DUTY_CYCLE_50_PERCENT (1 << (PWM_RESOLUTION_BITS - 1))  // 50% duty cycle (128 for 8-bit)
 
 // Timer Duration Constants (in microseconds)
 #define TIMER_ONE_SECOND_US 1000000      // 1 second in microseconds
