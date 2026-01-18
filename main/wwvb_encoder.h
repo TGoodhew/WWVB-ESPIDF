@@ -36,6 +36,9 @@
 #define WWVB_BIT_ONE 1
 #define WWVB_BIT_MARKER 2
 
+// Time structure constants
+#define YEAR_OFFSET_1900 1900    // tm_year offset from 1900 (tm_year = year - 1900)
+
 /*
  * Encode a value in BCD format for WWVB
  * 

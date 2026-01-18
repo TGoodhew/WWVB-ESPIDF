@@ -88,10 +88,9 @@
 #define WWVB_DST_BIT_58 58
 
 // Time constants for leap year calculation
-#define LEAP_YEAR_MARCH_MONTH 2  // March (0-based: January is 0)
+#define LEAP_YEAR_MARCH_MONTH 2  // March in struct tm (0-based: January=0, February=1, March=2)
 #define LEAP_YEAR_TEST_DAY 0     // Zero day of March rolls back to last day of February
 #define LEAP_YEAR_FEB_29 29      // Day value for February 29
-#define YEAR_OFFSET_1900 1900    // tm_year offset from 1900
 
 uint16_t BitsEncoder(uint16_t n)
 {
