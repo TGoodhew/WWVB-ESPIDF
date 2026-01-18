@@ -12,6 +12,7 @@
 
 // DST calculation constants
 #define DST_SECOND_SUNDAY_OFFSET 7   // Days from first Sunday to second Sunday
+#define FIRST_DAY_OF_MONTH 1         // First day of any month
 #define MARCH_MONTH_START_DAY 1
 #define NOVEMBER_MONTH_START_DAY 1
 
@@ -44,7 +45,7 @@ void calculateDSTDays(int year, int *startDay, int *endDay)
     // For January, we treat it as month 13 of previous year in Zeller's formula
     const int y = year - 1;
     const int m = ZELLER_JANUARY_AS_MONTH_13; // January as month 13 of previous year
-    const int q = MARCH_MONTH_START_DAY;      // day of month (January 1)
+    const int q = FIRST_DAY_OF_MONTH;         // day of month (January 1)
     
     // Apply Zeller's congruence formula
     const int century = y / LEAP_YEAR_DIVISOR_100;
