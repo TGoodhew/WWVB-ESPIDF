@@ -95,8 +95,8 @@ static const char *ntpServer = CONFIG_WWVB_NTP_SERVER;
 typedef struct {
     uint8_t buffer0[60];  // First buffer
     uint8_t buffer1[60];  // Second buffer
-    uint8_t *active;      // Pointer to array being transmitted by ISR
-    uint8_t *staging;     // Pointer to array being prepared for next minute
+    volatile uint8_t *active;      // Pointer to array being transmitted by ISR
+    volatile uint8_t *staging;     // Pointer to array being prepared for next minute
     volatile uint8_t slot;
     volatile bool swap_pending;  // Flag to indicate staging array is ready to become active
 } wwvb_state_t;
@@ -112,6 +112,9 @@ static wwvb_state_t wwvb_state = {
 
 // Flag for signaling WWVB array updates from ISR to task
 static volatile bool update_wwvb_array = false;
+
+// Spinlock for protecting pointer swap in ISR
+static portMUX_TYPE wwvb_spinlock = portMUX_INITIALIZER_UNLOCKED;
 
 // Debug queue for ISR to task communication
 #define DEBUG_QUEUE_SIZE 10
@@ -579,11 +582,17 @@ void TimerSecond_ISR(void *param)
   // Pointer swapping is much faster than copying 60 bytes in ISR context
   if (wwvb_state.slot == 0 && wwvb_state.swap_pending)
   {
+      // Use critical section to ensure atomic pointer swap
+      // This prevents race conditions if main task reads pointers during swap
+      portENTER_CRITICAL_ISR(&wwvb_spinlock);
+      
       // Swap pointers: staging becomes active, old active becomes staging
-      uint8_t *temp = wwvb_state.active;
+      volatile uint8_t *temp = wwvb_state.active;
       wwvb_state.active = wwvb_state.staging;
       wwvb_state.staging = temp;
       wwvb_state.swap_pending = false;
+      
+      portEXIT_CRITICAL_ISR(&wwvb_spinlock);
   }
 
   // Validate slot index before accessing active array
