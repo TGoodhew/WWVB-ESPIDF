@@ -18,6 +18,7 @@
 */
 
 #include <stdio.h>
+#include <string.h>
 #include <inttypes.h>
 #include "sdkconfig.h"
 #include <freertos/FreeRTOS.h>
@@ -88,19 +89,32 @@ void debug_task(void *pvParameters);
 // WWVB related
 static const char *ntpServer = CONFIG_WWVB_NTP_SERVER;
 
-// WWVB state structure
+// WWVB state structure with double-buffering using pointer swapping
+// We use two arrays: one active (being transmitted) and one staging (being prepared)
+// This ensures the ISR always reads a complete, consistent 60-second frame
 typedef struct {
-    uint8_t array[60];
+    uint8_t buffer0[60];  // First buffer
+    uint8_t buffer1[60];  // Second buffer
+    volatile uint8_t *active;      // Pointer to array being transmitted by ISR
+    volatile uint8_t *staging;     // Pointer to array being prepared for next minute
     volatile uint8_t slot;
+    volatile bool swap_pending;  // Flag to indicate staging array is ready to become active
 } wwvb_state_t;
 
 static wwvb_state_t wwvb_state = {
-    .array = {0},
-    .slot = 0
+    .buffer0 = {0},
+    .buffer1 = {0},
+    .active = NULL,   // Will be initialized in app_main
+    .staging = NULL,  // Will be initialized in app_main
+    .slot = 0,
+    .swap_pending = false
 };
 
 // Flag for signaling WWVB array updates from ISR to task
 static volatile bool update_wwvb_array = false;
+
+// Spinlock for protecting pointer swap in ISR
+static portMUX_TYPE wwvb_spinlock = portMUX_INITIALIZER_UNLOCKED;
 
 // Debug queue for ISR to task communication
 #define DEBUG_QUEUE_SIZE 10
@@ -196,7 +210,15 @@ void app_main(void)
 
     ESP_LOGI("SNTP", "Initializing WWVBArray");
 
+    // Initialize the pointers to the two buffers
+    wwvb_state.active = wwvb_state.buffer0;
+    wwvb_state.staging = wwvb_state.buffer1;
+    
     SetupWWVBArray();
+    
+    // Copy staging to active for initial data before timer starts
+    memcpy(wwvb_state.active, wwvb_state.staging, 60);
+    wwvb_state.swap_pending = false; // Reset flag after manual copy
 
     ESP_LOGI("SNTP", "Initializing Timers");
 
@@ -494,16 +516,20 @@ void SetupWWVBArray()
         return;
     }
 
-    // Using the current UTC time fill in the WWVBArray
-    encodeYear(utcTime->tm_year + 1900, wwvb_state.array);
-    encodeDayOfYear(utcTime->tm_yday + 1, wwvb_state.array);
-    encodeHour(utcTime->tm_hour, wwvb_state.array);
-    encodeMinute(utcTime->tm_min, wwvb_state.array);
-    setMarkersAndIndicators(wwvb_state.array);
-    setDUT1(wwvb_state.array); // We're ignoring DUT1 as it has been deprecated and not used in this scenario
-    setLeapYear(utcTime->tm_year + 1900, wwvb_state.array);
-    setLeapSecond(false, wwvb_state.array); // Ignore leap seconds in this scenario
-    setDST(isDaylightSavingTime(utcTime->tm_year + 1900, utcTime->tm_yday + 1), wwvb_state.array);
+    // Write to the staging array (not the active array being transmitted)
+    // The staging array will become active at the next minute boundary
+    encodeYear(utcTime->tm_year + 1900, wwvb_state.staging);
+    encodeDayOfYear(utcTime->tm_yday + 1, wwvb_state.staging);
+    encodeHour(utcTime->tm_hour, wwvb_state.staging);
+    encodeMinute(utcTime->tm_min, wwvb_state.staging);
+    setMarkersAndIndicators(wwvb_state.staging);
+    setDUT1(wwvb_state.staging); // We're ignoring DUT1 as it has been deprecated and not used in this scenario
+    setLeapYear(utcTime->tm_year + 1900, wwvb_state.staging);
+    setLeapSecond(false, wwvb_state.staging); // Ignore leap seconds in this scenario
+    setDST(isDaylightSavingTime(utcTime->tm_year + 1900, utcTime->tm_yday + 1), wwvb_state.staging);
+    
+    // Signal that the staging array is ready to be swapped at the next minute boundary
+    wwvb_state.swap_pending = true;
 }
 
 void SetupTimers()
@@ -551,13 +577,32 @@ void TimerSecond_ISR(void *param)
   // Remove ESP_ERROR_CHECK - just call the function directly
   gpio_set_level((gpio_num_t)CONFIG_WWVB_DEBUG_LED_PIN, ON);
 
-  // Validate slot index before accessing WWVBArray
+  // At the start of a new minute (slot 0), swap the pointers if a swap is pending
+  // This ensures we always transmit a complete, consistent 60-second frame
+  // Pointer swapping is much faster than copying 60 bytes in ISR context
+  if (wwvb_state.slot == 0 && wwvb_state.swap_pending)
+  {
+      // Use critical section to ensure atomic pointer swap
+      // This prevents race conditions if main task reads pointers during swap
+      portENTER_CRITICAL_ISR(&wwvb_spinlock);
+      
+      // Swap pointers: staging becomes active, old active becomes staging
+      volatile uint8_t *temp = wwvb_state.active;
+      wwvb_state.active = wwvb_state.staging;
+      wwvb_state.staging = temp;
+      wwvb_state.swap_pending = false;
+      
+      portEXIT_CRITICAL_ISR(&wwvb_spinlock);
+  }
+
+  // Validate slot index before accessing active array
   if (wwvb_state.slot >= 60)
   {
       wwvb_state.slot = 0;
   }
 
-  switch (wwvb_state.array[wwvb_state.slot])
+  // Always read from the active array (never from staging)
+  switch (wwvb_state.active[wwvb_state.slot])
   {
   case 0:
   {
