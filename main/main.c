@@ -157,21 +157,18 @@ void app_main(void)
 
     SetupWiFi();
 
-    ESP_LOGI("WWVB", "Initializing WWVBArray");
+    ESP_LOGI("WWVB", "Initializing WWVB buffers");
 
     // Initialize the double-buffer pointers
     // buffer0 is initially active, buffer1 is initially staging
     wwvb_state.active = wwvb_state.buffer0;
     wwvb_state.staging = wwvb_state.buffer1;
     
-    SetupWWVBArray();
-    
-    // Copy staging to active for initial data before timer starts
-    // Use a loop instead of memcpy to respect volatile qualifier
-    for (int i = 0; i < WWVB_SIGNAL_ARRAY_SIZE; i++) {
-        wwvb_state.active[i] = wwvb_state.staging[i];
-    }
-    wwvb_state.swap_pending = false; // Reset flag after manual copy
+    // Note: We do NOT call SetupWWVBArray() here because the system time
+    // has not been synchronized yet via SNTP. Calling it now would result
+    // in an invalid time check failure, leaving the buffer as all zeros.
+    // Instead, SetupWWVBArray() will be called from SNTP_callback() after
+    // time synchronization completes and before the timer starts.
 
     ESP_LOGI("SignalOutput", "Initializing Timers");
 
