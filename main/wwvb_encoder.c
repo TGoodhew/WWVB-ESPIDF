@@ -310,26 +310,33 @@ void encodeHour(uint8_t hour, volatile uint8_t *signal)
  * @brief Encode minute value into WWVB signal format
  * 
  * WWVB encodes the minute (00-59) in 7 bit positions using BCD format.
- * The minute is split across two groups with marker/reserved bits between them:
- * - Positions 1-3: Ones digit (0-9) - lower 3 bits only (bit 3 unused)
+ * The minute encoding in WWVB is unusual compared to other fields:
+ * - Positions 1-3: Lower 3 bits of ones digit (bit positions 6, 5, 4 of BCD)
  * - Position 4: Reserved (always 0)
- * - Positions 5-8: Tens digit (0-5) - 4 bits
+ * - Positions 5-8: All 4 bits of tens digit (bit positions 3, 2, 1, 0 of BCD)
  * 
- * Note: The ones digit only uses 3 bits (positions 1-3), so bit 3 is never set.
- * This is sufficient since it encodes values 0-9 which only need 4 bits maximum,
- * but WWVB protocol only uses the lower 3 bits for ones digit of minutes.
+ * BCD Format Review:
+ * In BCD, a 2-digit decimal number is encoded as:
+ * - Bits 7-4: Ones digit (0-9)
+ * - Bits 3-0: Tens digit (0-5 for minutes)
  * 
- * Example: minute=42 → bitsResult=0x0042 (binary: 0100 0010)
- *   Position 1: bit 6 (ones bit 2... wait, let me recalculate)
- *   Actually: 42 in BCD = 0x42 = 0100 0010
- *   Tens digit = 4 = 0100, Ones digit = 2 = 0010
- *   Position 1: bit 6 (ones bit 2, MSB used)  = 0
- *   Position 2: bit 5 (ones bit 1)            = 1
- *   Position 3: bit 4 (ones bit 0, LSB)       = 0
- *   Position 5: bit 3 (tens bit 3, MSB)       = 0
- *   Position 6: bit 2 (tens bit 2)            = 1
- *   Position 7: bit 1 (tens bit 1)            = 0
- *   Position 8: bit 0 (tens bit 0, LSB)       = 0
+ * Example: minute=42 → BitsEncoder returns 0x0042
+ *   Binary: 0000 0000 0100 0010
+ *           └─unused─┘ └ones┘ └tens┘
+ *   
+ *   Breaking down 0x42:
+ *   - Bit 7: 0 (ones MSB, unused)
+ *   - Bit 6: 0 (ones bit 2) → Position 1
+ *   - Bit 5: 1 (ones bit 1) → Position 2  
+ *   - Bit 4: 0 (ones bit 0) → Position 3
+ *   - Bit 3: 0 (tens bit 3) → Position 5
+ *   - Bit 2: 1 (tens bit 2) → Position 6
+ *   - Bit 1: 0 (tens bit 1) → Position 7
+ *   - Bit 0: 0 (tens bit 0) → Position 8
+ * 
+ * So minute 42 = 40 + 2:
+ *   - Ones digit (2) in BCD: 0010 (bits 6-4 = 010)
+ *   - Tens digit (4) in BCD: 0100 (bits 3-0 = 0100)
  * 
  * @param minute Minute value (0 to WWVB_MAX_MINUTE, 0-59)
  * @param signal Pointer to 60-byte WWVB signal array to update
@@ -353,14 +360,16 @@ void encodeMinute(uint8_t minute, volatile uint8_t *signal)
 
     // Encode minute into WWVB signal positions 1-3 and 5-8 (7 bits total)
     // Position 0 is a marker, Position 4 is reserved (always 0)
-    signal[WWVB_MINUTE_BIT_1] = (bitsResult & 0x40) >> 6;  // Ones digit bit 2
-    signal[WWVB_MINUTE_BIT_2] = (bitsResult & 0x20) >> 5;  // Ones digit bit 1
-    signal[WWVB_MINUTE_BIT_3] = (bitsResult & 0x10) >> 4;  // Ones digit bit 0
+    // Extract ones digit (bits 6, 5, 4 of BCD result)
+    signal[WWVB_MINUTE_BIT_1] = (bitsResult & 0x40) >> 6;  // Bit 6 (ones digit bit 2)
+    signal[WWVB_MINUTE_BIT_2] = (bitsResult & 0x20) >> 5;  // Bit 5 (ones digit bit 1)
+    signal[WWVB_MINUTE_BIT_3] = (bitsResult & 0x10) >> 4;  // Bit 4 (ones digit bit 0)
     // Position 4 is reserved
-    signal[WWVB_MINUTE_BIT_5] = (bitsResult & 0x08) >> 3;  // Tens digit bit 3 (MSB)
-    signal[WWVB_MINUTE_BIT_6] = (bitsResult & 0x04) >> 2;  // Tens digit bit 2
-    signal[WWVB_MINUTE_BIT_7] = (bitsResult & 0x02) >> 1;  // Tens digit bit 1
-    signal[WWVB_MINUTE_BIT_8] = (bitsResult & 0x01);       // Tens digit bit 0 (LSB)
+    // Extract tens digit (bits 3, 2, 1, 0 of BCD result)
+    signal[WWVB_MINUTE_BIT_5] = (bitsResult & 0x08) >> 3;  // Bit 3 (tens digit bit 3, MSB)
+    signal[WWVB_MINUTE_BIT_6] = (bitsResult & 0x04) >> 2;  // Bit 2 (tens digit bit 2)
+    signal[WWVB_MINUTE_BIT_7] = (bitsResult & 0x02) >> 1;  // Bit 1 (tens digit bit 1)
+    signal[WWVB_MINUTE_BIT_8] = (bitsResult & 0x01);       // Bit 0 (tens digit bit 0, LSB)
 }
 
 /**
