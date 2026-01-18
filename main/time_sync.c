@@ -32,6 +32,11 @@
 #define SNTP_SYNC_TIMEOUT_MS 10000       // 10 second timeout for SNTP synchronization
 #define TIME_STRING_BUFFER_SIZE 64       // Buffer size for time string formatting
 
+// Minute boundary synchronization constants
+#define BOUNDARY_POLLING_THRESHOLD_SECONDS 5  // Switch to fine polling when within this many seconds of boundary
+#define COARSE_POLL_INTERVAL_MS 1000     // Polling interval when far from boundary (1 second)
+#define FINE_POLL_INTERVAL_MS 100        // Polling interval when close to boundary (100ms)
+
 // WWVB related
 static const char *ntpServer = CONFIG_WWVB_NTP_SERVER;
 
@@ -145,23 +150,22 @@ void SNTP_callback(struct timeval *tv)
     // contains the time M (not M+1 as per strict WWVB spec interpretation)
     ESP_LOGI("SNTP", "Waiting for next minute boundary to start WWVB transmission...");
     
-    time_t rawtime;
-    struct tm *utcTime;
-    int current_second = -1;
-    
     while (true)
     {
+        time_t rawtime;
+        struct tm *utcTime;
+        
         time(&rawtime);
         utcTime = gmtime(&rawtime);
         
         if (utcTime == NULL)
         {
             ESP_LOGE("SNTP", "Failed to get UTC time, gmtime returned NULL");
-            vTaskDelay(pdMS_TO_TICKS(100)); // Wait 100ms and retry
+            vTaskDelay(pdMS_TO_TICKS(FINE_POLL_INTERVAL_MS)); // Wait and retry
             continue;
         }
         
-        current_second = utcTime->tm_sec;
+        const int current_second = utcTime->tm_sec;
         
         // Check if we're at the start of a minute (second 0)
         if (current_second == 0)
@@ -173,8 +177,10 @@ void SNTP_callback(struct timeval *tv)
         
         // Calculate how long to wait until the next minute boundary
         // We check more frequently as we get closer to the boundary
-        int seconds_until_boundary = 60 - current_second;
-        int wait_ms = (seconds_until_boundary > 5) ? 1000 : 100;
+        const int seconds_until_boundary = 60 - current_second;
+        const int wait_ms = (seconds_until_boundary > BOUNDARY_POLLING_THRESHOLD_SECONDS) 
+                            ? COARSE_POLL_INTERVAL_MS 
+                            : FINE_POLL_INTERVAL_MS;
         
         vTaskDelay(pdMS_TO_TICKS(wait_ms));
     }
