@@ -322,21 +322,6 @@ Next Second Timer ISR fires at t=1000ms
 
 **Security Note**: The PoP (Proof of Possession) is generated using SHA-256 hash of the MAC address. This prevents attackers from deriving the PoP by observing the advertised service name or scanning for MAC addresses. The PoP must be obtained from the device's serial console output.
 
-## Configuration
-
-The following parameters can be configured via `idf.py menuconfig` under "WWVB Configuration":
-
-- **WWVB Output GPIO Pin**: GPIO pin for 60kHz signal output (default: 26, A0 on Huzzah32)
-- **Debug LED GPIO Pin**: GPIO pin for debug LED (default: 13)
-- **NTP Server**: NTP server hostname or IP address (default: "pool.ntp.org")
-- **WiFi Max Retry**: Maximum WiFi connection retry attempts (default: 10)
-
-To configure these parameters:
-```bash
-idf.py menuconfig
-```
-Navigate to "WWVB Configuration" and adjust the settings as needed.
-
 ## Building and Flashing
 
 ### Prerequisites
