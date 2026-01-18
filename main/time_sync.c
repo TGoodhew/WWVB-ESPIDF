@@ -27,11 +27,10 @@ void SetupSNTP(void)
 
     ESP_ERROR_CHECK(esp_netif_sntp_init(&sntp_config));
 
-    // Retry SNTP synchronization up to 3 times
-    const int max_retries = 3;
+    // Retry SNTP synchronization up to SNTP_MAX_RETRY_ATTEMPTS times
     esp_err_t sntp_result = ESP_FAIL;
     
-    for (int retry = 0; retry < max_retries; retry++)
+    for (int retry = 0; retry < SNTP_MAX_RETRY_ATTEMPTS; retry++)
     {
         sntp_result = esp_netif_sntp_sync_wait(pdMS_TO_TICKS(SNTP_SYNC_TIMEOUT_MS));
         
@@ -42,12 +41,13 @@ void SetupSNTP(void)
         }
         else
         {
-            ESP_LOGE("SNTP", "Failed to update system time within 10s timeout (attempt %d/%d)", retry + 1, max_retries);
+            ESP_LOGE("SNTP", "Failed to update system time within %dms timeout (attempt %d/%d)", 
+                     SNTP_SYNC_TIMEOUT_MS, retry + 1, SNTP_MAX_RETRY_ATTEMPTS);
             
-            if (retry < max_retries - 1)
+            if (retry < SNTP_MAX_RETRY_ATTEMPTS - 1)
             {
-                ESP_LOGI("SNTP", "Retrying SNTP synchronization...");
-                vTaskDelay(pdMS_TO_TICKS(2000)); // Wait 2 seconds before retry
+                ESP_LOGI("SNTP", "Retrying SNTP synchronization in %dms...", SNTP_RETRY_DELAY_MS);
+                vTaskDelay(pdMS_TO_TICKS(SNTP_RETRY_DELAY_MS));
             }
         }
     }
@@ -55,7 +55,8 @@ void SetupSNTP(void)
     // If all retries failed, halt execution
     if (sntp_result != ESP_OK)
     {
-        ESP_LOGE("SNTP", "SNTP synchronization failed after %d attempts. Cannot continue without valid time.", max_retries);
+        ESP_LOGE("SNTP", "SNTP synchronization failed after %d attempts. Cannot continue without valid time.", 
+                 SNTP_MAX_RETRY_ATTEMPTS);
         ESP_ERROR_CHECK(sntp_result); // This will abort execution
     }
 }

@@ -66,15 +66,33 @@ static volatile bool update_wwvb_array = false;
 static portMUX_TYPE wwvb_spinlock = portMUX_INITIALIZER_UNLOCKED;
 
 // Function prototypes
+
+/*
+ * Setup WWVB array with current time data
+ * Encodes current UTC time into the staging WWVB signal array.
+ * Includes year, day of year, hour, minute, DST status, and other indicators.
+ * The staging array will be swapped to active at the next minute boundary.
+ */
 void SetupWWVBArray(void);
+
+/*
+ * Timer ISR called once per second
+ * Advances through the 60-second WWVB frame, transmitting each bit.
+ * Manages double-buffer pointer swapping at minute boundaries.
+ * Triggers array updates at slots 30 and 60.
+ * 
+ * @param param Timer parameter (unused)
+ */
 void TimerSecond_ISR(void *param);
 
 void app_main(void)
 {
+    // Disable output buffering for immediate console output
     setvbuf(stdout, NULL, _IONBF, 0);
 
     ESP_LOGI("GPIO", "Configuring GPIO");
 
+    // Configure debug LED GPIO
     gpio_reset_pin((gpio_num_t)CONFIG_WWVB_DEBUG_LED_PIN);
     gpio_set_direction((gpio_num_t)CONFIG_WWVB_DEBUG_LED_PIN, GPIO_MODE_OUTPUT);
 
@@ -101,7 +119,8 @@ void app_main(void)
 
     ESP_LOGI("SNTP", "Initializing WWVBArray");
 
-    // Initialize the pointers to the two buffers
+    // Initialize the double-buffer pointers
+    // buffer0 is initially active, buffer1 is initially staging
     wwvb_state.active = wwvb_state.buffer0;
     wwvb_state.staging = wwvb_state.buffer1;
     
@@ -120,18 +139,20 @@ void app_main(void)
 
     ESP_LOGI("SNTP", "Initializing Signal Output");
 
+    // Setup 60 kHz carrier output using LEDC PWM
     Setup60KHzOutput();
 
-    // Create debug queue and task
+    // Create debug queue and task for ISR-to-task logging
     InitDebugQueue();
 
+    // Main loop: Check for WWVB array update requests from ISR
     while (1)
     {
         // Check if the ISR signaled that we need to update the array
         if (update_wwvb_array)
         {
             update_wwvb_array = false;
-            SetupWWVBArray();
+            SetupWWVBArray();  // Encode current time into staging array
         }
         // Sleep for 500ms to ensure flag is checked frequently
         // Updates happen when signaled by ISR (at slot 30 and slot 60, i.e., twice per minute)
@@ -185,14 +206,15 @@ void IRAM_ATTR TimerSecond_ISR(void *param)
   static bool ON;
   static QueueHandle_t debug_queue_cached = NULL;
   
-  // Cache the debug queue handle on first call
+  // Cache the debug queue handle on first call to avoid repeated lookups
   if (debug_queue_cached == NULL) {
       debug_queue_cached = GetDebugQueue();
   }
   
+  // Toggle debug LED state
   ON = !ON;
   
-  // Remove ESP_ERROR_CHECK - just call the function directly
+  // Set debug LED without error checking (ISR context)
   gpio_set_level((gpio_num_t)CONFIG_WWVB_DEBUG_LED_PIN, ON);
 
   // At the start of a new minute (slot 0), swap the pointers if a swap is pending
