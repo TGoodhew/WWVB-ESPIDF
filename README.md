@@ -358,22 +358,134 @@ Press `Ctrl+]` to exit the monitor.
 idf.py -p /dev/ttyUSB0 flash monitor
 ```
 
-## Usage
+## WiFi Provisioning Guide
 
-1. **First Boot**: Device will start BLE provisioning
-   - Service name appears as `PROV_XXXXXX` (where XXXXXX is from MAC address)
-   - Check serial console for the PoP (Proof of Possession) - a 12-character hex code
-   - Use ESP BLE Provisioning app (Android/iOS) to provision WiFi credentials
-   
-2. **WiFi Connection**: Device connects to configured WiFi network
-   
-3. **Time Sync**: Device fetches time from NTP server
-   
-4. **Signal Generation**: 60 kHz WWVB signal starts on configured GPIO pin
-   
-5. **Atomic Clock Sync**: Place your atomic clock near the ESP32 antenna
+This device uses **BLE (Bluetooth Low Energy) provisioning** for secure WiFi setup. You'll need the **ESP BLE Provisioning** app on your Android phone.
+
+### Prerequisites
+
+- **Android Phone** with Bluetooth enabled
+- **ESP BLE Provisioning App** - Download from Google Play Store:
+  - Search for "ESP BLE Provisioning" or "Espressif Bluetooth Provisioning"
+  - Official app by Espressif Systems
+- **Serial Console Access** - To view the device's Proof of Possession (PoP) code
+  - Use `idf.py monitor` or any serial terminal at 115200 baud
+
+### First-Time Setup (Provisioning)
+
+Follow these steps to provision your device for the first time:
+
+#### Step 1: Flash and Start the Device
+
+```bash
+# Flash the firmware and start monitoring
+idf.py -p /dev/ttyUSB0 flash monitor
+```
+
+#### Step 2: Get the PoP Code from Serial Console
+
+After the device boots, look for these messages in the serial output:
+
+```
+I (782) WiFi: Is provisioned: false
+I (782) WiFi: Starting provisioning
+I (782) WiFi: Provisioning PoP: FFAC3113281B
+```
+
+**Important:** Write down or copy the **PoP code** (e.g., `FFAC3113281B`). You'll need this in Step 5.
+
+> **Security Note:** The PoP is generated using SHA-256 hash of your device's MAC address. This prevents unauthorized provisioning attempts. Each device has a unique PoP that cannot be guessed without access to the serial console.
+
+#### Step 3: Open ESP BLE Provisioning App
+
+1. Open the **ESP BLE Provisioning** app on your Android phone
+2. Ensure Bluetooth is enabled on your phone
+3. Grant location permissions if requested (required for BLE scanning on Android)
+
+#### Step 4: Connect to Your Device
+
+1. Tap **"Provision New Device"**
+2. The app will scan for nearby devices
+3. Look for your device in the list: **`PROV_XXXXXX`**
+   - The `XXXXXX` part is derived from your device's MAC address
+   - Example: `PROV_0F85BC`
+4. Tap on your device name to connect
+
+#### Step 5: Enter the Proof of Possession
+
+1. The app will prompt for **"Proof of Possession"**
+2. Enter the **PoP code** you copied from the serial console in Step 2
+   - Example: `FFAC3113281B`
+   - **Case-sensitive** - enter exactly as shown
+3. Tap **"Next"** or **"Connect"**
+
+If the PoP is incorrect, the connection will fail. Double-check the serial console output.
+
+#### Step 6: Configure WiFi Credentials
+
+1. The app will scan for available WiFi networks
+2. Select your WiFi network from the list (or enter SSID manually)
+3. Enter your WiFi password
+4. Tap **"Provision"** or **"Apply"**
+
+#### Step 7: Wait for Provisioning to Complete
+
+The app will show provisioning progress:
+- **"Sending credentials..."** - Transmitting your WiFi details to the device
+- **"Connecting..."** - Device is connecting to your WiFi
+- **"Success!"** - Provisioning completed
+
+In the serial console, you should see:
+
+```
+I (12000) WiFi: Received Wi-Fi credentials
+I (12000) WiFi:     SSID     : YourNetworkName
+I (12000) WiFi:     Password : ********
+I (13000) WiFi: Provisioning successful
+I (14000) WiFi: WiFi started, connecting to configured AP
+I (15000) WiFi: got ip:192.168.1.100
+```
+
+#### Step 8: Verify Operation
+
+Once provisioned and connected:
+
+1. **WiFi Connection**: Device automatically connects to your WiFi
+2. **Time Sync**: Device fetches time from NTP server (`pool.ntp.org` by default)
+3. **Signal Generation**: 60 kHz WWVB signal starts on GPIO 26 (A0 pin)
+4. **Atomic Clock Sync**: Place your atomic clock near the ESP32
    - Most clocks sync automatically when they detect signal loss
    - Some clocks have a manual sync button
+
+### Subsequent Boots
+
+After initial provisioning, the device will:
+1. **Automatically connect** to the saved WiFi network on every boot
+2. **No need to provision again** - credentials are stored in non-volatile memory
+3. **Resume operation** - Time sync and signal generation start automatically
+
+You'll see this in the serial console:
+
+```
+I (782) WiFi: Is provisioned: true
+I (782) WiFi: Already provisioned, starting Wi-Fi STA
+I (1500) WiFi: WiFi started, connecting to configured AP
+I (2500) WiFi: got ip:192.168.1.100
+```
+
+### Resetting WiFi Credentials (Factory Reset)
+
+If you need to provision the device with a different WiFi network:
+
+```bash
+# Erase all stored credentials and settings
+idf.py -p /dev/ttyUSB0 erase-flash
+
+# Flash the firmware again
+idf.py -p /dev/ttyUSB0 flash monitor
+```
+
+This will reset the device to factory defaults, and you can follow the provisioning steps again.
 
 ## Signal Output
 
@@ -385,21 +497,75 @@ And is showing up as a nice spike on my spectrum analyzer (direct connection via
 
 ## Troubleshooting
 
+### BLE Provisioning Issues
+
+#### Device Not Found in App
+- **Ensure Bluetooth is enabled** on your Android phone
+- **Grant location permissions** - Required for BLE scanning on Android
+- **Check serial console** - Device should show "Starting provisioning"
+- **Device may already be provisioned** - Try erasing flash: `idf.py erase-flash`
+- **Move closer** - BLE range is limited (typically 10-30 feet)
+- **Restart the app** - Close and reopen ESP BLE Provisioning app
+- **Check device is powered** - Look for LED activity or serial output
+
+#### PoP Code Rejected
+- **Case-sensitive** - PoP must match exactly (e.g., `FFAC3113281B`)
+- **Copy carefully** - Avoid typos when entering the 12-character hex code
+- **Check serial console** - Verify you're using the PoP from the current boot
+- **Each boot generates same PoP** - PoP is derived from MAC address, stays constant
+
+#### Provisioning Fails After Entering Credentials
+- **Wrong WiFi password** - Double-check your WiFi password
+- **WiFi network not found** - Ensure your WiFi is broadcasting (not hidden)
+- **2.4 GHz only** - ESP32 only supports 2.4 GHz WiFi (not 5 GHz)
+- **WPA2 required** - Device doesn't support WPA3-only networks
+- **Check router settings** - Some routers have MAC filtering or client limits
+
+#### Device Connects Then Disconnects
+- **Weak WiFi signal** - Move ESP32 closer to router
+- **Router rejected device** - Check router logs for blocked devices
+- **DHCP issues** - Ensure router has available IP addresses
+- **Check retry count** - Default is 10 attempts (configurable via menuconfig)
+
 ### Time Not Synchronizing
-- Check WiFi connection: `idf.py monitor` should show "got ip"
-- Verify NTP server is reachable
-- Check firewall/network allows NTP (UDP port 123)
+- **Check WiFi connection** - Serial console should show "got ip:192.168.x.x"
+- **Verify NTP server** - Default is `pool.ntp.org`
+  - Check internet connectivity
+  - Try pinging the NTP server from another device
+- **Firewall/Network** - Ensure NTP traffic allowed (UDP port 123)
+- **Time zone** - Device uses UTC internally, DST handled automatically
+- **Wait for sync** - Initial sync can take 30-60 seconds
 
 ### Atomic Clock Not Syncing
-- Ensure GPIO 26 (A0) is connected to antenna or clock input
-- Move clock closer to ESP32
-- Try manual sync on atomic clock
-- Check signal on oscilloscope to verify output
+- **Check signal output** - Use oscilloscope to verify 60 kHz signal on GPIO 26
+- **Antenna connection** - Ensure GPIO 26 (A0) connected to antenna or clock input
+- **Distance** - Move clock closer to ESP32 (start with 1-2 feet)
+- **Manual sync** - Most atomic clocks have a manual sync button
+- **Clock compatibility** - Ensure clock is designed for WWVB (60 kHz), not DCF77 (77.5 kHz)
+- **Wait time** - Full sync can take 5-10 minutes for most atomic clocks
+- **Orientation** - Try rotating the clock for better signal reception
 
-### BLE Provisioning Not Working
-- Device may already be provisioned - erase flash: `idf.py erase-flash`
-- Check PoP is entered correctly (case-sensitive hex)
-- Ensure phone Bluetooth is enabled
+### Device Keeps Rebooting
+- **Power supply** - Ensure adequate power (500mA+ recommended)
+- **USB cable quality** - Try a different USB cable
+- **Check serial console** - Look for error messages before reboot
+- **Brownout detector** - May trigger with insufficient power
+- **If during provisioning** - Update to latest firmware (fixes WiFi connect issue)
+
+### Lost WiFi Credentials / Need to Re-provision
+```bash
+# Erase all stored data
+idf.py -p /dev/ttyUSB0 erase-flash
+
+# Flash firmware and re-provision
+idf.py -p /dev/ttyUSB0 flash monitor
+```
+
+### Serial Console Not Working
+- **Check port** - Try different port: `/dev/ttyUSB0`, `/dev/ttyUSB1`, `COM3`, etc.
+- **Check baud rate** - Should be 115200
+- **Driver required** - Some boards need CP2102 or CH340 USB-to-serial drivers
+- **Permissions (Linux)** - Add user to dialout group: `sudo usermod -a -G dialout $USER`
 
 ## Technical References
 

@@ -237,21 +237,41 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
 {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) 
     {
-        ESP_ERROR_CHECK(esp_wifi_connect());
+        /* Only connect if we're already provisioned and have credentials.
+         * During provisioning, WiFi will be started but we should wait for
+         * credentials to be received. The provisioning manager will handle
+         * WiFi configuration internally, and connection will happen automatically.
+         */
+        if (wifi_state.is_provisioned) 
+        {
+            ESP_LOGI("WiFi", "WiFi started, connecting to configured AP");
+            ESP_ERROR_CHECK(esp_wifi_connect());
+        }
+        else
+        {
+            ESP_LOGI("WiFi", "WiFi started, waiting for provisioning to complete");
+        }
     } 
     else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) 
     {
-        if (wifi_state.retry_count < CONFIG_WIFI_MAX_RETRY) 
+        /* Only retry connection if we have credentials (are provisioned).
+         * During provisioning, disconnects should not trigger reconnection attempts.
+         */
+        if (wifi_state.is_provisioned && wifi_state.retry_count < CONFIG_WIFI_MAX_RETRY) 
         {
             ESP_ERROR_CHECK(esp_wifi_connect());
             wifi_state.retry_count++;
             ESP_LOGI("WiFi", "retry to connect to the AP");
         } 
+        else if (!wifi_state.is_provisioned)
+        {
+            ESP_LOGW("WiFi", "Disconnected but not provisioned yet, waiting for provisioning");
+        }
         else 
         {
             xEventGroupSetBits(wifi_state.event_group, WIFI_FAIL_BIT);
+            ESP_LOGE("WiFi", "connect to the AP failed after %d retries", CONFIG_WIFI_MAX_RETRY);
         }
-        ESP_LOGI("WiFi", "connect to the AP fail");
     } 
     else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) 
     {
@@ -284,6 +304,13 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
             }
             case WIFI_PROV_CRED_SUCCESS:
                 ESP_LOGI("WiFi", "Provisioning successful");
+                /* Credentials have been received and validated by the provisioning manager.
+                 * The provisioning manager has already configured WiFi with these credentials.
+                 * Connection will be handled automatically by WiFi event handlers.
+                 * Update our state to reflect that we now have credentials, so reconnection
+                 * logic will work if the device disconnects before rebooting.
+                 */
+                wifi_state.is_provisioned = true;
                 break;
             case WIFI_PROV_END:
                 /* De-initialize manager once provisioning is finished */
