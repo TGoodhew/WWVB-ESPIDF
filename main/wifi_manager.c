@@ -330,7 +330,8 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
         // Initialize SNTP now that we have a network connection
         // Use mutex for thread-safe check and set operation
         // Only do this once, not on every reconnection
-        if (xSemaphoreTake(sntp_init_mutex, portMAX_DELAY) == pdTRUE)
+        // Use finite timeout to prevent permanent blocking of event loop
+        if (xSemaphoreTake(sntp_init_mutex, pdMS_TO_TICKS(1000)) == pdTRUE)
         {
             if (!sntp_initialized) 
             {
@@ -355,9 +356,14 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
                 else
                 {
                     ESP_LOGE("WiFi", "Failed to create SNTP initialization task");
+                    // Leave sntp_initialized as false so it will be retried on next connection
                 }
             }
             xSemaphoreGive(sntp_init_mutex);
+        }
+        else
+        {
+            ESP_LOGW("WiFi", "Failed to acquire SNTP mutex within timeout, will retry on next connection");
         }
     } 
     else if (event_base == WIFI_PROV_EVENT) 
