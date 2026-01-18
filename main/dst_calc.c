@@ -13,8 +13,6 @@
 // DST calculation constants
 #define DST_SECOND_SUNDAY_OFFSET 7   // Days from first Sunday to second Sunday
 #define FIRST_DAY_OF_MONTH 1         // First day of any month
-#define MARCH_MONTH_START_DAY 1
-#define NOVEMBER_MONTH_START_DAY 1
 
 // Zeller's congruence calculation constants
 #define ZELLER_MONTH_MULTIPLIER 13
@@ -59,7 +57,7 @@ void calculateDSTDays(int year, int *startDay, int *endDay)
     const int jan1_dow = (h + ZELLER_OFFSET_TO_STANDARD) % DAYS_PER_WEEK;
     
     // ===== Calculate Second Sunday in March =====
-    const int march1_doy = DAYS_IN_JANUARY + daysInFeb + MARCH_MONTH_START_DAY;
+    const int march1_doy = DAYS_IN_JANUARY + daysInFeb + FIRST_DAY_OF_MONTH;
     const int march1_dow = (jan1_dow + (march1_doy - 1)) % DAYS_PER_WEEK;
     
     // Days from March 1 until first Sunday
@@ -67,20 +65,20 @@ void calculateDSTDays(int year, int *startDay, int *endDay)
     
     // Second Sunday is 7 days after first Sunday
     // If March 1 is a Sunday (days_to_first_sunday == 0), then March 1 is the first Sunday
-    const int second_sunday_date = MARCH_MONTH_START_DAY + days_to_first_sunday + DST_SECOND_SUNDAY_OFFSET;
+    const int second_sunday_date = FIRST_DAY_OF_MONTH + days_to_first_sunday + DST_SECOND_SUNDAY_OFFSET;
     
     *startDay = march1_doy - 1 + second_sunday_date; // -1 because march1_doy includes March 1
     
     // ===== Calculate First Sunday in November =====
     const int nov1_doy = DAYS_IN_JANUARY + daysInFeb + DAYS_IN_MARCH + DAYS_IN_APRIL + 
                          DAYS_IN_MAY + DAYS_IN_JUNE + DAYS_IN_JULY + DAYS_IN_AUGUST + 
-                         DAYS_IN_SEPTEMBER + DAYS_IN_OCTOBER + NOVEMBER_MONTH_START_DAY;
+                         DAYS_IN_SEPTEMBER + DAYS_IN_OCTOBER + FIRST_DAY_OF_MONTH;
     const int nov1_dow = (jan1_dow + (nov1_doy - 1)) % DAYS_PER_WEEK;
     
     // Days from November 1 until first Sunday
     const int days_to_first_sunday_nov = (nov1_dow == DOW_SUNDAY) ? 0 : (DAYS_PER_WEEK - nov1_dow);
     
-    const int first_sunday_date = NOVEMBER_MONTH_START_DAY + days_to_first_sunday_nov;
+    const int first_sunday_date = FIRST_DAY_OF_MONTH + days_to_first_sunday_nov;
     
     *endDay = nov1_doy - 1 + first_sunday_date; // -1 because nov1_doy includes Nov 1
 }

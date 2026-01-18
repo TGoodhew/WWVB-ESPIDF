@@ -97,9 +97,9 @@ uint16_t BitsEncoder(uint16_t n)
 {
     uint16_t result = 0;
 
-    const uint8_t div1 = n / BCD_DIVISOR_100;
-    const uint8_t div2 = (n % BCD_DIVISOR_100) / BCD_DIVISOR_10;
-    const uint8_t mod = n % BCD_DIVISOR_10;
+    const uint8_t div1 = n / BCD_DIVISOR_100;                              // Hundreds digit
+    const uint8_t div2 = (n / BCD_DIVISOR_10) % BCD_DIVISOR_10;           // Tens digit
+    const uint8_t mod = n % BCD_DIVISOR_10;                               // Ones digit
 
     result = (div1 & BCD_MASK_NIBBLE) << 8;
     result |= (div2 & BCD_MASK_NIBBLE) << 4;
