@@ -66,7 +66,7 @@ void SetupWiFi(void)
     /* Let's find out if the device is provisioned */
     ESP_ERROR_CHECK(wifi_prov_mgr_is_provisioned(&wifi_state.is_provisioned));
 
-    ESP_LOGI("WiFI", "Is provisioned: %s", wifi_state.is_provisioned ? "true" : "false");
+    ESP_LOGI("WiFi", "Is provisioned: %s", wifi_state.is_provisioned ? "true" : "false");
 
     /* If device is not yet provisioned start provisioning service */
     if (!wifi_state.is_provisioned)
@@ -151,7 +151,7 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
         {
             xEventGroupSetBits(wifi_state.event_group, WIFI_FAIL_BIT);
         }
-        ESP_LOGI("WiFi","connect to the AP fail");
+        ESP_LOGI("WiFi", "connect to the AP fail");
     } 
     else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) 
     {
