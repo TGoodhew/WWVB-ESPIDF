@@ -13,7 +13,24 @@
 #include <mbedtls/sha256.h>
 #include "sdkconfig.h"
 
-#define POP_BUFFER_SIZE 13  // 13 bytes: 12 hex chars (6 MAC bytes * 2) + null terminator
+// Provisioning PoP buffer size (12 hex chars + null terminator)
+#define POP_BUFFER_SIZE 13
+
+// Service name prefix for BLE provisioning
+#define SERVICE_NAME_PREFIX "PROV_"
+#define SERVICE_NAME_PREFIX_LEN 5
+#define SERVICE_NAME_STRING_LENGTH 11  // String length: 5 prefix + 6 hex chars (excludes null terminator)
+
+// MAC address size
+#define MAC_ADDRESS_SIZE 6
+#define MAC_HEX_CHARS_PER_BYTE 2
+
+// Hash size for SHA-256
+#define SHA256_HASH_SIZE 32
+
+// Number of hash bytes used for PoP generation
+#define POP_HASH_BYTES 6
+#define POP_STRING_LENGTH 12  // String length: 6 bytes * 2 hex chars (excludes null terminator)
 
 const int WIFI_CONNECTED_BIT = BIT0;
 const int WIFI_FAIL_BIT = BIT1;
@@ -73,7 +90,7 @@ void SetupWiFi(void)
     {
         ESP_LOGI("WiFi", "Starting provisioning");
 
-        char service_name[12];
+        char service_name[WIFI_SERVICE_NAME_SIZE];
         get_device_service_name(service_name, sizeof(service_name));
 
         /* Generate a device-unique proof-of-possession using a cryptographic hash of the MAC address.
@@ -197,11 +214,32 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
 
 static void get_device_service_name(char *service_name, size_t max)
 {
-    uint8_t eth_mac[6];
-    const char *ssid_prefix = "PROV_";
+    // Validate input parameters
+    if (service_name == NULL || max < WIFI_SERVICE_NAME_SIZE)
+    {
+        ESP_LOGE("WiFi", "get_device_service_name: Invalid buffer (NULL or size %zu < %d)", 
+                 max, WIFI_SERVICE_NAME_SIZE);
+        if (service_name != NULL && max > 0)
+        {
+            service_name[0] = '\0';  // Set empty string on error
+        }
+        return;
+    }
+    
+    uint8_t eth_mac[MAC_ADDRESS_SIZE];
     ESP_ERROR_CHECK(esp_wifi_get_mac(WIFI_IF_STA, eth_mac));
-    snprintf(service_name, max, "%s%02X%02X%02X",
-             ssid_prefix, eth_mac[3], eth_mac[4], eth_mac[5]);
+    
+    // Format: "PROV_" + last 3 bytes of MAC in hex (6 chars) + null
+    const int result = snprintf(service_name, max, "%s%02X%02X%02X",
+                                SERVICE_NAME_PREFIX, eth_mac[3], eth_mac[4], eth_mac[5]);
+    
+    // Verify snprintf success (result should be SERVICE_NAME_STRING_LENGTH)
+    if (result < 0 || result >= (int)max)
+    {
+        ESP_LOGE("WiFi", "get_device_service_name: snprintf failed or truncated (result=%d, expected=%d)", 
+                 result, SERVICE_NAME_STRING_LENGTH);
+        service_name[0] = '\0';
+    }
 }
 
 // Generate a cryptographically secure proof-of-possession (PoP) based on device MAC address
@@ -209,9 +247,10 @@ static void get_device_service_name(char *service_name, size_t max)
 // by observing the MAC address through BLE advertising or network scanning
 static void generate_unique_pop(char *pop, size_t max)
 {
+    // Validate input parameters
     if (pop == NULL || max < POP_BUFFER_SIZE)
     {
-        ESP_LOGE("POP", "Invalid PoP buffer: pop is %s, size=%zu (need at least %d)",
+        ESP_LOGE("WiFi", "generate_unique_pop: Invalid PoP buffer: pop is %s, size=%zu (need at least %d)",
                  pop == NULL ? "NULL" : "non-NULL", max, POP_BUFFER_SIZE);
         if (pop != NULL && max > 0)
         {
@@ -220,28 +259,28 @@ static void generate_unique_pop(char *pop, size_t max)
         return;
     }
 
-    uint8_t eth_mac[6];
+    uint8_t eth_mac[MAC_ADDRESS_SIZE];
     ESP_ERROR_CHECK(esp_wifi_get_mac(WIFI_IF_STA, eth_mac));
     
     // Use SHA-256 hash of MAC address for cryptographic security
     // This prevents attackers from deriving the PoP by observing the MAC address
-    uint8_t hash[32];  // SHA-256 produces 32 bytes
+    uint8_t hash[SHA256_HASH_SIZE];
     mbedtls_sha256_context sha256_ctx;
     mbedtls_sha256_init(&sha256_ctx);
     
     int ret = mbedtls_sha256_starts(&sha256_ctx, 0);  // 0 = SHA-256 (not SHA-224)
     if (ret != 0)
     {
-        ESP_LOGE("POP", "SHA-256 start failed: %d", ret);
+        ESP_LOGE("WiFi", "generate_unique_pop: SHA-256 start failed: %d", ret);
         mbedtls_sha256_free(&sha256_ctx);
         pop[0] = '\0';  // Set empty string on error
         return;
     }
     
-    ret = mbedtls_sha256_update(&sha256_ctx, eth_mac, 6);
+    ret = mbedtls_sha256_update(&sha256_ctx, eth_mac, MAC_ADDRESS_SIZE);
     if (ret != 0)
     {
-        ESP_LOGE("POP", "SHA-256 update failed: %d", ret);
+        ESP_LOGE("WiFi", "generate_unique_pop: SHA-256 update failed: %d", ret);
         mbedtls_sha256_free(&sha256_ctx);
         pop[0] = '\0';  // Set empty string on error
         return;
@@ -250,7 +289,7 @@ static void generate_unique_pop(char *pop, size_t max)
     ret = mbedtls_sha256_finish(&sha256_ctx, hash);
     if (ret != 0)
     {
-        ESP_LOGE("POP", "SHA-256 finish failed: %d", ret);
+        ESP_LOGE("WiFi", "generate_unique_pop: SHA-256 finish failed: %d", ret);
         mbedtls_sha256_free(&sha256_ctx);
         pop[0] = '\0';  // Set empty string on error
         return;
@@ -258,7 +297,15 @@ static void generate_unique_pop(char *pop, size_t max)
     
     mbedtls_sha256_free(&sha256_ctx);
     
-    // Use first 6 bytes of hash to create 12-character hex PoP
-    snprintf(pop, max, "%02X%02X%02X%02X%02X%02X",
-             hash[0], hash[1], hash[2], hash[3], hash[4], hash[5]);
+    // Use first POP_HASH_BYTES bytes of hash to create 12-character hex PoP
+    const int result = snprintf(pop, max, "%02X%02X%02X%02X%02X%02X",
+                                hash[0], hash[1], hash[2], hash[3], hash[4], hash[5]);
+    
+    // Verify snprintf success (result should be POP_STRING_LENGTH)
+    if (result < 0 || result >= (int)max)
+    {
+        ESP_LOGE("WiFi", "generate_unique_pop: snprintf failed or truncated (result=%d, expected=%d)", 
+                 result, POP_STRING_LENGTH);
+        pop[0] = '\0';
+    }
 }
