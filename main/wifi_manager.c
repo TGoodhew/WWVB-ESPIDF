@@ -32,6 +32,7 @@
  */
 
 #include "wifi_manager.h"
+#include "time_sync.h"
 #include <string.h>
 #include <esp_log.h>
 #include <esp_wifi.h>
@@ -69,6 +70,9 @@ static wifi_state_t wifi_state = {
     .retry_count = 0,
     .event_group = NULL
 };
+
+// Track whether SNTP has been initialized to ensure it only happens once
+static bool sntp_initialized = false;
 
 // Forward declarations
 static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
@@ -279,6 +283,15 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
         ESP_LOGI("WiFi", "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
         wifi_state.retry_count = 0;
         xEventGroupSetBits(wifi_state.event_group, WIFI_CONNECTED_BIT);
+        
+        // Initialize SNTP now that we have a network connection
+        // Only do this once, not on every reconnection
+        if (!sntp_initialized) 
+        {
+            ESP_LOGI("WiFi", "Network connected, initializing SNTP");
+            SetupSNTP();
+            sntp_initialized = true;
+        }
     } 
     else if (event_base == WIFI_PROV_EVENT) 
     {

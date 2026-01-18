@@ -157,10 +157,6 @@ void app_main(void)
 
     SetupWiFi();
 
-    ESP_LOGI("SNTP", "Initializing SNTP");
-
-    SetupSNTP();
-
     ESP_LOGI("SNTP", "Initializing WWVBArray");
 
     // Initialize the double-buffer pointers
