@@ -1,4 +1,2 @@
 build/
 .devcontainer/devcontainer.local.json
-sdkconfig
-sdkconfig.old
