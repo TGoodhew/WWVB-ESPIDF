@@ -92,6 +92,20 @@ static portMUX_TYPE wwvb_spinlock = portMUX_INITIALIZER_UNLOCKED;
 void SetupWWVBArray(void);
 
 /**
+ * @brief Initialize WWVB active buffer before timer starts
+ * 
+ * This function is called once after SNTP synchronization to prepare the
+ * initial WWVB signal data before the timer starts transmitting. It:
+ * 1. Encodes the current time into the staging buffer
+ * 2. Copies staging buffer to active buffer for immediate transmission
+ * 3. Resets the swap_pending flag
+ * 
+ * This ensures the first transmitted frame contains valid time data rather
+ * than all zeros. Must be called after SNTP sync but before StartSecondTimer().
+ */
+void InitializeWWVBBuffer(void);
+
+/**
  * @brief Main per-second ISR that drives WWVB signal transmission
  * 
  * This Interrupt Service Routine (ISR) is the heart of the WWVB emulator. It's called
@@ -235,6 +249,24 @@ void SetupWWVBArray(void)
     
     // Signal that the staging array is ready to be swapped at the next minute boundary
     wwvb_state.swap_pending = true;
+}
+
+void InitializeWWVBBuffer(void)
+{
+    // Encode current time into staging buffer
+    SetupWWVBArray();
+    
+    // Copy staging to active for initial data before timer starts
+    // Use a loop instead of memcpy to respect volatile qualifier
+    for (int i = 0; i < WWVB_SIGNAL_ARRAY_SIZE; i++) {
+        wwvb_state.active[i] = wwvb_state.staging[i];
+    }
+    
+    // Reset swap_pending flag since we manually copied the data
+    // The next update will set it to true again
+    wwvb_state.swap_pending = false;
+    
+    ESP_LOGI("WWVB", "Initial WWVB buffer initialized with current time");
 }
 
 void IRAM_ATTR TimerSecond_ISR(void *param)

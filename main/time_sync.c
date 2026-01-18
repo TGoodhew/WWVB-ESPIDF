@@ -18,6 +18,7 @@
 
 #include "time_sync.h"
 #include "signal_output.h"
+#include "wwvb_main.h"
 #include <string.h>
 #include <time.h>
 #include <esp_log.h>
@@ -111,8 +112,16 @@ void SetupSNTP(void)
  * 
  * The callback:
  * 1. Logs the successful synchronization event
- * 2. Starts the 1 Hz second timer (defined in signal_output module)
- * 3. Initiates the continuous WWVB signal transmission cycle
+ * 2. Waits for the next minute boundary (tm_sec == 0) to align transmission
+ * 3. Initializes the WWVB buffer with current time data
+ * 4. Starts the 1 Hz second timer at the minute boundary
+ * 5. Initiates the continuous WWVB signal transmission cycle
+ * 
+ * Minute Boundary Synchronization:
+ * The WWVB signal frame represents a specific minute (the minute that will
+ * begin 1 minute from now). To ensure atomic clocks receive accurate time,
+ * we must start transmitting at the exact beginning of a minute (when seconds == 0).
+ * This alignment is critical for proper time synchronization.
  * 
  * After this callback, the system enters its steady-state operation:
  * - Second timer fires every second
@@ -126,9 +135,53 @@ void SNTP_callback(struct timeval *tv)
 {
     ESP_LOGI("SNTP", "SNTP Synchronized - System time is now accurate");
     
+    // Wait for the next minute boundary (when tm_sec == 0) to start transmission
+    // This ensures the WWVB signal frame aligns with actual UTC minute boundaries
+    ESP_LOGI("SNTP", "Waiting for next minute boundary to start WWVB transmission...");
+    
+    time_t rawtime;
+    struct tm *utcTime;
+    int current_second = -1;
+    
+    while (true)
+    {
+        time(&rawtime);
+        utcTime = gmtime(&rawtime);
+        
+        if (utcTime == NULL)
+        {
+            ESP_LOGE("SNTP", "Failed to get UTC time, gmtime returned NULL");
+            vTaskDelay(pdMS_TO_TICKS(100)); // Wait 100ms and retry
+            continue;
+        }
+        
+        current_second = utcTime->tm_sec;
+        
+        // Check if we're at the start of a minute (second 0)
+        if (current_second == 0)
+        {
+            ESP_LOGI("SNTP", "Minute boundary reached at %02d:%02d:%02d UTC", 
+                     utcTime->tm_hour, utcTime->tm_min, utcTime->tm_sec);
+            break;
+        }
+        
+        // Calculate how long to wait until the next minute boundary
+        // We check more frequently as we get closer to the boundary
+        int seconds_until_boundary = 60 - current_second;
+        int wait_ms = (seconds_until_boundary > 5) ? 1000 : 100;
+        
+        vTaskDelay(pdMS_TO_TICKS(wait_ms));
+    }
+    
+    // Now we're at the start of a minute - initialize the buffer with current time
+    // This buffer will represent the CURRENT minute that just started
+    InitializeWWVBBuffer();
+    
     // Start the second timer to begin WWVB signal generation
-    // This is the moment when the emulator starts transmitting
+    // The timer will fire at second 1, 2, 3... of this minute
     StartSecondTimer();
+    
+    ESP_LOGI("SNTP", "WWVB signal transmission started at minute boundary");
 }
 
 /**

@@ -15,9 +15,25 @@
  * This function writes to the staging buffer and sets the swap_pending flag.
  * 
  * Called from:
- * - SNTP_callback() - Initial setup after time sync, before timer starts
  * - Main loop - Periodic updates when signaled by ISR
  */
 void SetupWWVBArray(void);
+
+/*
+ * Initialize WWVB active buffer before timer starts
+ * 
+ * This function is called once after SNTP synchronization to prepare the
+ * initial WWVB signal data before the timer starts transmitting. It:
+ * 1. Encodes the current time into the staging buffer
+ * 2. Copies staging buffer to active buffer for immediate transmission
+ * 3. Resets the swap_pending flag
+ * 
+ * This ensures the first transmitted frame contains valid time data rather
+ * than all zeros. Must be called after SNTP sync but before StartSecondTimer().
+ * 
+ * Called from:
+ * - SNTP_callback() - Initial setup after time sync, before timer starts
+ */
+void InitializeWWVBBuffer(void);
 
 #endif // WWVB_MAIN_H
