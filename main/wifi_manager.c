@@ -307,7 +307,10 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
                 /* Credentials have been received and validated by the provisioning manager.
                  * The provisioning manager has already configured WiFi with these credentials.
                  * Connection will be handled automatically by WiFi event handlers.
+                 * Update our state to reflect that we now have credentials, so reconnection
+                 * logic will work if the device disconnects before rebooting.
                  */
+                wifi_state.is_provisioned = true;
                 break;
             case WIFI_PROV_END:
                 /* De-initialize manager once provisioning is finished */
