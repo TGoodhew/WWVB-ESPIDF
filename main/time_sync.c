@@ -3,6 +3,7 @@
  */
 
 #include "time_sync.h"
+#include "signal_output.h"
 #include <string.h>
 #include <time.h>
 #include <esp_log.h>
@@ -18,9 +19,6 @@
 
 // WWVB related
 static const char *ntpServer = CONFIG_WWVB_NTP_SERVER;
-
-// External timer handle (defined in signal_output module)
-extern void StartSecondTimer(void);
 
 void SetupSNTP(void)
 {

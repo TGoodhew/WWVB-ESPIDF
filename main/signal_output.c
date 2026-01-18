@@ -4,14 +4,13 @@
 
 #include "signal_output.h"
 #include "time_sync.h"
+#include "wwvb_config.h"
 #include <esp_log.h>
 #include <esp_timer.h>
 #include <driver/ledc.h>
 #include <driver/gpio.h>
 #include <freertos/task.h>
 #include "sdkconfig.h"
-
-#define WWVBDEBUG
 
 // Task and Buffer Size Constants
 #define DEBUG_TASK_STACK_SIZE 2048       // Stack size for debug task

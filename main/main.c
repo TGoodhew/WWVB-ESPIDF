@@ -28,7 +28,8 @@
 #include <esp_log.h>
 #include <nvs_flash.h>
 
-#define WWVBDEBUG
+// Common configuration
+#include "wwvb_config.h"
 
 // Application modules
 #include "wwvb_encoder.h"
