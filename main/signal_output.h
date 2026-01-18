@@ -58,7 +58,7 @@ void ZeroCarrier(void);
  * Timer ISR to re-enable the carrier signal
  * Called after bit/marker reduced power period
  */
-void TimerSignalReenable_ISR(void);
+void TimerSignalReenable_ISR(void *param);
 
 /*
  * Debug task to handle logging from ISR context

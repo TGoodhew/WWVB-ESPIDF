@@ -146,8 +146,9 @@ void ZeroCarrier(void)
 }
 
 // All the bit/marker timers just reenable the 50% duty cycle of the 60KHz signal
-void IRAM_ATTR TimerSignalReenable_ISR(void)
+void IRAM_ATTR TimerSignalReenable_ISR(void *param)
 {
+    (void)param; // Suppress unused parameter warning
     // Remove ESP_ERROR_CHECK - just call the functions directly
     // Errors in ISR context cannot be safely handled
     ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, PWM_DUTY_CYCLE_50_PERCENT);
