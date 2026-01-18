@@ -64,11 +64,6 @@ static volatile bool update_wwvb_array = false;
 // Spinlock for protecting pointer swap in ISR
 static portMUX_TYPE wwvb_spinlock = portMUX_INITIALIZER_UNLOCKED;
 
-// Debug message type for ISR to task communication
-typedef struct {
-    char type;  // '0', '1', 'M', or 'N' for newline/time log
-} debug_msg_t;
-
 // Function prototypes
 void SetupWWVBArray(void);
 void TimerSecond_ISR(void *param);

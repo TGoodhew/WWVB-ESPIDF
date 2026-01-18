@@ -10,6 +10,7 @@
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
+#include <esp_timer.h>
 
 // WWVB Signal Constants
 #define WWVB_CARRIER_FREQUENCY_HZ 60000  // 60 kHz carrier frequency for WWVB signal
@@ -23,6 +24,11 @@
 
 // Debug queue for ISR to task communication
 #define DEBUG_QUEUE_SIZE 10
+
+// Debug message type for ISR to task communication
+typedef struct {
+    char type;  // '0', '1', 'M', or 'N' for newline/time log
+} debug_msg_t;
 
 /*
  * Setup the 60 kHz PWM output
