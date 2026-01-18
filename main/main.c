@@ -157,11 +157,7 @@ void app_main(void)
 
     SetupWiFi();
 
-    ESP_LOGI("SNTP", "Initializing SNTP");
-
-    SetupSNTP();
-
-    ESP_LOGI("SNTP", "Initializing WWVBArray");
+    ESP_LOGI("WWVB", "Initializing WWVBArray");
 
     // Initialize the double-buffer pointers
     // buffer0 is initially active, buffer1 is initially staging
@@ -177,11 +173,11 @@ void app_main(void)
     }
     wwvb_state.swap_pending = false; // Reset flag after manual copy
 
-    ESP_LOGI("SNTP", "Initializing Timers");
+    ESP_LOGI("SignalOutput", "Initializing Timers");
 
     SetupTimers();
 
-    ESP_LOGI("SNTP", "Initializing Signal Output");
+    ESP_LOGI("SignalOutput", "Initializing Signal Output");
 
     // Setup 60 kHz carrier output using LEDC PWM
     Setup60KHzOutput();

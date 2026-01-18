@@ -32,6 +32,7 @@
  */
 
 #include "wifi_manager.h"
+#include "time_sync.h"
 #include <string.h>
 #include <esp_log.h>
 #include <esp_wifi.h>
@@ -40,6 +41,7 @@
 #include <wifi_provisioning/manager.h>
 #include <wifi_provisioning/scheme_ble.h>
 #include <mbedtls/sha256.h>
+#include <freertos/semphr.h>
 #include "sdkconfig.h"
 
 // Provisioning PoP buffer size (12 hex chars + null terminator)
@@ -70,8 +72,14 @@ static wifi_state_t wifi_state = {
     .event_group = NULL
 };
 
+// Track whether SNTP has been initialized to ensure it only happens once
+// Protected by mutex for thread safety
+static bool sntp_initialized = false;
+static SemaphoreHandle_t sntp_init_mutex = NULL;
+
 // Forward declarations
 static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
+static void sntp_init_task(void *pvParameters);
 
 /**
  * @brief Generate a device-unique BLE service name for provisioning
@@ -129,6 +137,37 @@ static void get_device_service_name(char *service_name, size_t max);
  */
 static void generate_unique_pop(char *pop, size_t max);
 
+/**
+ * @brief Dedicated task to initialize SNTP asynchronously
+ * 
+ * This task runs in its own context separate from the event loop task,
+ * allowing SetupSNTP() to block without affecting system event processing.
+ * The task performs SNTP initialization (which can take up to 36 seconds
+ * with retries) and then deletes itself.
+ * 
+ * Using a dedicated task ensures:
+ * - Event loop remains responsive to other system events
+ * - SNTP initialization completes with full retry logic
+ * - System stability is maintained during time synchronization
+ * 
+ * @param pvParameters Task parameters (unused)
+ */
+static void sntp_init_task(void *pvParameters)
+{
+    (void)pvParameters;  // Suppress unused parameter warning
+    
+    ESP_LOGI("WiFi", "SNTP initialization task started");
+    
+    // Initialize SNTP with full retry logic
+    // This call may block for up to 36 seconds but runs in dedicated task context
+    SetupSNTP();
+    
+    ESP_LOGI("WiFi", "SNTP initialization task completed");
+    
+    // Task has completed its work, delete itself
+    vTaskDelete(NULL);
+}
+
 wifi_state_t* GetWiFiState(void)
 {
     return &wifi_state;
@@ -136,6 +175,14 @@ wifi_state_t* GetWiFiState(void)
 
 void SetupWiFi(void)
 {
+    /* Create mutex for thread-safe SNTP initialization flag */
+    sntp_init_mutex = xSemaphoreCreateMutex();
+    if (sntp_init_mutex == NULL)
+    {
+        ESP_LOGE("WiFi", "Failed to create SNTP initialization mutex");
+        abort();
+    }
+    
     /* Initialize TCP/IP */
     ESP_ERROR_CHECK(esp_netif_init());
 
@@ -279,6 +326,45 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
         ESP_LOGI("WiFi", "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
         wifi_state.retry_count = 0;
         xEventGroupSetBits(wifi_state.event_group, WIFI_CONNECTED_BIT);
+        
+        // Initialize SNTP now that we have a network connection
+        // Use mutex for thread-safe check and set operation
+        // Only do this once, not on every reconnection
+        // Use finite timeout to prevent permanent blocking of event loop
+        if (xSemaphoreTake(sntp_init_mutex, pdMS_TO_TICKS(1000)) == pdTRUE)
+        {
+            if (!sntp_initialized) 
+            {
+                ESP_LOGI("WiFi", "Network connected, creating SNTP initialization task");
+                
+                // Create a dedicated task to handle SNTP initialization asynchronously
+                // This prevents blocking the event loop task for up to 36 seconds
+                BaseType_t task_created = xTaskCreate(
+                    sntp_init_task,           // Task function
+                    "sntp_init",              // Task name
+                    4096,                     // Stack size (bytes)
+                    NULL,                     // Task parameters
+                    5,                        // Priority (moderate priority)
+                    NULL                      // Task handle (not needed)
+                );
+                
+                if (task_created == pdPASS)
+                {
+                    // Mark as initialized to prevent multiple task creation
+                    sntp_initialized = true;
+                }
+                else
+                {
+                    ESP_LOGE("WiFi", "Failed to create SNTP initialization task");
+                    // Leave sntp_initialized as false so it will be retried on next connection
+                }
+            }
+            xSemaphoreGive(sntp_init_mutex);
+        }
+        else
+        {
+            ESP_LOGW("WiFi", "Failed to acquire SNTP mutex within timeout, will retry on next connection");
+        }
     } 
     else if (event_base == WIFI_PROV_EVENT) 
     {
