@@ -14,21 +14,23 @@
 
 // Task and Buffer Size Constants
 #define DEBUG_TASK_STACK_SIZE 2048       // Stack size for debug task
+#define SIGNAL_TASK_STACK_SIZE 3072      // Stack size for signal modulation task
+#define SIGNAL_TASK_PRIORITY 6           // Priority for signal modulation task (higher than debug)
 
-// Timer handles structure
+// Task notification constants
+#define TASK_NOTIF_CLEAR_ALL 0xFFFFFFFF  // Clear all notification bits
+
+// Timer handles structure (only second timer needed)
 typedef struct {
-    esp_timer_handle_t bit0;
-    esp_timer_handle_t bit1;
-    esp_timer_handle_t marker;
     esp_timer_handle_t second;
 } timer_handles_t;
 
 static timer_handles_t timers = {
-    .bit0 = NULL,
-    .bit1 = NULL,
-    .marker = NULL,
     .second = NULL
 };
+
+// Task handle for signal modulation task
+static TaskHandle_t signal_task_handle = NULL;
 
 // 60KHz output
 static ledc_channel_config_t ledc_channel;
@@ -75,6 +77,61 @@ void DebugTask(void *pvParameters)
                 printf("%c", msg.type);
             }
             #endif
+        }
+    }
+}
+
+/**
+ * @brief Signal modulation task
+ * 
+ * This task handles carrier re-enable operations after reduced-power periods.
+ * In ESP-IDF v5.5.2, calling esp_timer_start_once() from within an ESP_TIMER_ISR
+ * callback can cause spinlock contention with WiFi's timer operations.
+ * 
+ * This task uses FreeRTOS delays instead of nested timers, completely avoiding
+ * the timer system for re-enable operations and eliminating spinlock conflicts.
+ * 
+ * Architecture:
+ * - Second timer (default dispatch) notifies this task instead of starting nested timers
+ * - Task uses vTaskDelay() for timing (separate from timer subsystem)
+ * - Runs at high priority to ensure timely carrier re-enable
+ * 
+ * @param pvParameters Task parameters (unused)
+ */
+static void signal_modulation_task(void *pvParameters)
+{
+    (void)pvParameters;
+    uint32_t notification_value;
+    
+    ESP_LOGI("SignalOutput", "Signal modulation task started");
+    
+    while (1) {
+        // Wait for notification from second timer ISR
+        // ISR will send notification instead of starting nested timers
+        if (xTaskNotifyWait(0, TASK_NOTIF_CLEAR_ALL, &notification_value, portMAX_DELAY) == pdTRUE) {
+            // Determine delay based on bit type
+            TickType_t delay_ticks;
+            
+            if (notification_value & SIGNAL_NOTIF_BIT0) {
+                // Bit 0: Wait 200ms then re-enable carrier
+                delay_ticks = pdMS_TO_TICKS(200);
+            } else if (notification_value & SIGNAL_NOTIF_BIT1) {
+                // Bit 1: Wait 500ms then re-enable carrier
+                delay_ticks = pdMS_TO_TICKS(500);
+            } else if (notification_value & SIGNAL_NOTIF_MARKER) {
+                // Marker: Wait 800ms then re-enable carrier
+                delay_ticks = pdMS_TO_TICKS(800);
+            } else {
+                // Unknown notification, skip
+                continue;
+            }
+            
+            // Wait for the appropriate duration
+            vTaskDelay(delay_ticks);
+            
+            // Re-enable carrier (restore to full power)
+            ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, PWM_DUTY_CYCLE_50_PERCENT);
+            ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
         }
     }
 }
@@ -129,72 +186,73 @@ void Setup60KHzOutput(void)
 }
 
 /**
- * @brief Create and configure all ESP32 timers for WWVB signal generation
+ * @brief Create and configure timer and task for WWVB signal generation
  * 
- * This function creates four high-resolution timers that work together to generate
- * the WWVB amplitude-modulated signal:
+ * This function creates the second timer and a dedicated signal modulation task.
+ * This architecture avoids spinlock issues by eliminating nested timer operations.
  * 
- * 1. Second Timer (1 Hz, periodic):
- *    - Triggers every 1 second
+ * Architecture:
+ * 1. Second Timer (1 Hz, periodic, default dispatch):
+ *    - Triggers every 1 second in timer task context
  *    - Advances through the 60-second WWVB frame
  *    - Reads the current bit value (0, 1, or marker)
  *    - Reduces carrier power (sets duty cycle to 0%)
- *    - Starts the appropriate bit timer based on the bit value
+ *    - Notifies signal modulation task (instead of starting nested timers)
  * 
- * 2. Bit0 Timer (200ms, one-shot):
- *    - Fired by Second Timer when bit value is '0'
- *    - Waits 200ms (0.2 seconds)
- *    - Restores carrier to full power (50% duty cycle)
+ * 2. Signal Modulation Task:
+ *    - Waits for notification from second timer callback
+ *    - Uses FreeRTOS delay (vTaskDelay) for appropriate duration
+ *    - Restores carrier to full power after delay
+ *    - Runs independently of timer subsystem, avoiding spinlock conflicts with WiFi
  * 
- * 3. Bit1 Timer (500ms, one-shot):
- *    - Fired by Second Timer when bit value is '1'
- *    - Waits 500ms (0.5 seconds)
- *    - Restores carrier to full power (50% duty cycle)
- * 
- * 4. Marker Timer (800ms, one-shot):
- *    - Fired by Second Timer when bit is a position marker
- *    - Waits 800ms (0.8 seconds)
- *    - Restores carrier to full power (50% duty cycle)
- * 
- * Timer Coordination Example (for a '1' bit):
+ * Signal Coordination Example (for a '1' bit):
  * ```
- * t=0.0s:  Second Timer ISR fires
+ * t=0.0s:  Second Timer callback fires
  *          └─> Carrier power reduced (0% duty)
- *          └─> Bit1 Timer started (500ms)
- * t=0.5s:  Bit1 Timer ISR fires
+ *          └─> Task notified with BIT1 flag
+ * t=0.5s:  Task delay expires
  *          └─> Carrier power restored (50% duty)
- * t=1.0s:  Second Timer ISR fires (next bit)
+ * t=1.0s:  Second Timer callback fires (next bit)
  *          └─> Repeat for next bit...
  * ```
  * 
- * All timers use ESP32's high-resolution timer API (esp_timer) which provides
- * microsecond accuracy, essential for proper WWVB signal timing.
+ * This approach eliminates spinlock issues by avoiding esp_timer_start_once()
+ * calls from within timer callback context, which can conflict with WiFi's timer usage.
  */
 void SetupTimers(void)
 {
     // Create the 1 Hz second timer (periodic) - drives the entire signal generation
+    // Using default dispatch method (timer task context)
+    // Task notifications to signal_modulation_task avoid nested timer operations
     const esp_timer_create_args_t timer_second_config = {
         .callback = &TimerSecond_ISR,
         .name = "One Second Timer"};
     ESP_ERROR_CHECK(esp_timer_create(&timer_second_config, &timers.second));
 
-    // Create Bit 0 timer (one-shot) - restores carrier after 0.2s reduced power
-    const esp_timer_create_args_t timer_bit0_config = {
-        .callback = &TimerSignalReenable_ISR,
-        .name = "Bit 0 Timer"};
-    ESP_ERROR_CHECK(esp_timer_create(&timer_bit0_config, &timers.bit0));
-            
-    // Create Bit 1 timer (one-shot) - restores carrier after 0.5s reduced power
-    const esp_timer_create_args_t timer_bit1_config = {
-        .callback = &TimerSignalReenable_ISR,
-        .name = "Bit 1 Timer"};
-    ESP_ERROR_CHECK(esp_timer_create(&timer_bit1_config, &timers.bit1));
-
-    // Create Marker timer (one-shot) - restores carrier after 0.8s reduced power
-    const esp_timer_create_args_t timer_bitmarker_config = {
-        .callback = &TimerSignalReenable_ISR,
-        .name = "Bit Marker Timer"};
-    ESP_ERROR_CHECK(esp_timer_create(&timer_bitmarker_config, &timers.marker));
+    // Create signal modulation task to handle carrier re-enable
+    // This task uses FreeRTOS delays instead of nested timers, avoiding
+    // spinlock contention with WiFi's timer operations
+    BaseType_t task_created = xTaskCreate(
+        signal_modulation_task,
+        "signal_mod",
+        SIGNAL_TASK_STACK_SIZE,
+        NULL,
+        SIGNAL_TASK_PRIORITY,  // Higher than debug task, ensures timely carrier re-enable
+        &signal_task_handle
+    );
+    
+    if (task_created != pdPASS || signal_task_handle == NULL) {
+        ESP_LOGE("SignalOutput", "Failed to create signal modulation task");
+        // Delete the second timer to prevent callbacks that depend on a NULL task handle
+        if (timers.second != NULL) {
+            ESP_ERROR_CHECK(esp_timer_delete(timers.second));
+            timers.second = NULL;
+        }
+        signal_task_handle = NULL;  // Ensure handle is NULL on failure
+        return;
+    } else {
+        ESP_LOGI("SignalOutput", "Signal modulation task created successfully");
+    }
 }
 
 void StartSecondTimer(void)
@@ -235,46 +293,8 @@ void ZeroCarrier(void)
     ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
 }
 
-/**
- * @brief Timer ISR to restore carrier to full power
- * 
- * This ISR is called by the Bit0, Bit1, or Marker timers after the appropriate
- * reduced-power duration has elapsed. It restores the carrier to full power
- * (50% duty cycle) for the remainder of the second.
- * 
- * Called from ISR context, so:
- * - Must be marked IRAM_ATTR (stored in fast instruction RAM)
- * - Cannot use blocking operations
- * - Should minimize execution time
- * - Cannot safely use ESP_ERROR_CHECK (would abort on error)
- * 
- * The carrier remains at full power until the next second timer fires, when
- * the cycle repeats for the next bit in the WWVB frame.
- * 
- * @param param Timer parameter (unused, but required by esp_timer API)
- */
-void IRAM_ATTR TimerSignalReenable_ISR(void *param)
+// Accessor for signal task handle (for timer callback use)
+TaskHandle_t GetSignalTaskHandle(void)
 {
-    (void)param; // Suppress unused parameter warning
-    
-    // Restore carrier to full power (50% duty cycle = 128 out of 255)
-    // This creates a square wave at 60 kHz with equal high and low periods
-    ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, PWM_DUTY_CYCLE_50_PERCENT);
-    ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
-}
-
-// Timer handles accessors for ISR use
-esp_timer_handle_t GetBit0Timer(void)
-{
-    return timers.bit0;
-}
-
-esp_timer_handle_t GetBit1Timer(void)
-{
-    return timers.bit1;
-}
-
-esp_timer_handle_t GetMarkerTimer(void)
-{
-    return timers.marker;
+    return signal_task_handle;
 }
