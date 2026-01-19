@@ -98,7 +98,7 @@ void DebugTask(void *pvParameters)
  * 
  * @param pvParameters Task parameters (unused)
  */
-static void signal_modulation_task(void *pvParameters)
+static void SignalModulationTask(void *pvParameters)
 {
     (void)pvParameters;
     uint32_t notification_value;
@@ -223,7 +223,7 @@ void SetupTimers(void)
 {
     // Create the 1 Hz second timer (periodic) - drives the entire signal generation
     // Using default dispatch method (timer task context)
-    // Task notifications to signal_modulation_task avoid nested timer operations
+    // Task notifications to SignalModulationTask avoid nested timer operations
     const esp_timer_create_args_t timer_second_config = {
         .callback = &TimerSecond_ISR,
         .name = "One Second Timer"};
@@ -233,7 +233,7 @@ void SetupTimers(void)
     // This task uses FreeRTOS delays instead of nested timers, avoiding
     // spinlock contention with WiFi's timer operations
     BaseType_t task_created = xTaskCreate(
-        signal_modulation_task,
+        SignalModulationTask,
         "signal_mod",
         SIGNAL_TASK_STACK_SIZE,
         NULL,
