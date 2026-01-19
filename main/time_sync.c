@@ -135,9 +135,6 @@ static void minute_boundary_sync_task(void *pvParameters)
     // Brief initial delay to avoid excessive system calls immediately after SNTP sync
     vTaskDelay(pdMS_TO_TICKS(FINE_POLL_INTERVAL_MS));
     
-    time_t boundary_time = 0;
-    struct tm boundary_tm = {0};
-    
     while (true)
     {
         time_t rawtime;
@@ -158,10 +155,6 @@ static void minute_boundary_sync_task(void *pvParameters)
         // Check if we're at the start of a minute (second 0)
         if (current_second == 0)
         {
-            // Capture the exact boundary time to minimize race conditions
-            boundary_time = rawtime;
-            boundary_tm = *utcTime;
-            
             ESP_LOGI("SNTP", "Minute boundary reached at %02d:%02d:%02d UTC", 
                      utcTime->tm_hour, utcTime->tm_min, utcTime->tm_sec);
             break;
