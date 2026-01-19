@@ -20,11 +20,6 @@
 // Task notification constants
 #define TASK_NOTIF_CLEAR_ALL 0xFFFFFFFF  // Clear all notification bits
 
-// Signal modulation task notification values
-#define SIGNAL_NOTIF_BIT0 (1 << 0)       // Bit 0: 200ms delay
-#define SIGNAL_NOTIF_BIT1 (1 << 1)       // Bit 1: 500ms delay
-#define SIGNAL_NOTIF_MARKER (1 << 2)     // Marker: 800ms delay
-
 // Timer handles structure (only second timer needed)
 typedef struct {
     esp_timer_handle_t second;
@@ -248,6 +243,12 @@ void SetupTimers(void)
     
     if (task_created != pdPASS || signal_task_handle == NULL) {
         ESP_LOGE("SignalOutput", "Failed to create signal modulation task");
+        // Delete the second timer to prevent callbacks that depend on a NULL task handle
+        if (timers.second != NULL) {
+            ESP_ERROR_CHECK(esp_timer_delete(timers.second));
+            timers.second = NULL;
+        }
+        return;
     } else {
         ESP_LOGI("SignalOutput", "Signal modulation task created successfully");
     }
@@ -291,7 +292,7 @@ void ZeroCarrier(void)
     ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
 }
 
-// Accessor for signal task handle (for ISR use)
+// Accessor for signal task handle (for timer callback use)
 TaskHandle_t GetSignalTaskHandle(void)
 {
     return signal_task_handle;

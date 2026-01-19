@@ -107,14 +107,14 @@ bool SetupWWVBArray(void);
 bool InitializeWWVBBuffer(void);
 
 /**
- * @brief Main per-second ISR that drives WWVB signal transmission
+ * @brief Main per-second timer callback that drives WWVB signal transmission
  * 
- * This Interrupt Service Routine (ISR) is the heart of the WWVB emulator. It's called
- * precisely once per second by the ESP32 high-resolution timer and is responsible for:
+ * This timer callback is the heart of the WWVB emulator. It's called
+ * precisely once per second by the ESP32 timer and is responsible for:
  * 
  * 1. **Double-Buffer Management**: At the start of each minute (slot 0), atomically
  *    swaps the active and staging buffer pointers if new data is ready. This ensures
- *    the ISR always reads a complete, consistent 60-second frame. No spinlock is
+ *    the callback always reads a complete, consistent 60-second frame. No spinlock is
  *    needed because pointer assignments are atomic on 32-bit architecture and there's
  *    no contention with the main task (which only writes to the staging buffer).
  * 
@@ -132,16 +132,15 @@ bool InitializeWWVBBuffer(void);
  *    - At slot 30 (mid-minute): Prepare next frame early
  *    - At slot 60→0 (end of minute): Definitely prepare next frame
  * 
- * ISR Design Considerations:
- * - **IRAM_ATTR**: Function stored in fast instruction RAM for consistent timing
+ * Timer Callback Design Considerations:
  * - **Timer task dispatch**: Runs in timer task context (default dispatch method)
  * - **Task notifications**: Notifies signal task instead of starting nested timers
  * - **Minimal execution time**: All operations are simple and deterministic
  * - **No blocking**: Never waits for anything, returns quickly
  * - **Atomic operations**: Pointer swap is naturally atomic on 32-bit architecture
- * - **Deferred logging**: Debug output is queued to a task, not printed in ISR
+ * - **Deferred logging**: Debug output is queued to a task, not printed in callback
  * 
- * Timing is critical: This ISR must complete in well under 1 millisecond to avoid
+ * Timing is critical: This callback must complete in well under 1 millisecond to avoid
  * jitter in the signal timing. Typical execution time is <50 microseconds.
  * 
  * @param param Timer parameter (unused, but required by esp_timer callback signature)
@@ -283,7 +282,7 @@ bool InitializeWWVBBuffer(void)
     return true;
 }
 
-void IRAM_ATTR TimerSecond_ISR(void *param)
+void TimerSecond_ISR(void *param)
 {
   (void)param; // Suppress unused parameter warning
   static bool ON;  // Debug LED state
@@ -298,7 +297,7 @@ void IRAM_ATTR TimerSecond_ISR(void *param)
       signal_task_cached = GetSignalTaskHandle();
   }
   
-  // Toggle debug LED to provide visual indication of ISR execution (1 Hz blink)
+  // Toggle debug LED to provide visual indication of timer callback execution (1 Hz blink)
   ON = !ON;
   gpio_set_level((gpio_num_t)CONFIG_WWVB_DEBUG_LED_PIN, ON);
 
@@ -347,12 +346,10 @@ void IRAM_ATTR TimerSecond_ISR(void *param)
       ZeroCarrier();
 
       // Notify signal modulation task to re-enable carrier after 200ms
-      // This avoids nested esp_timer_start_once() calls that cause spinlock issues
+      // Using xTaskNotify (not FromISR) because callback runs in timer task context
       if (signal_task_cached != NULL)
       {
-          BaseType_t higher_priority_task_woken = pdFALSE;
-          xTaskNotifyFromISR(signal_task_cached, SIGNAL_NOTIF_BIT0, eSetBits, &higher_priority_task_woken);
-          portYIELD_FROM_ISR(higher_priority_task_woken);
+          xTaskNotify(signal_task_cached, SIGNAL_NOTIF_BIT0, eSetBits);
       }
     }
   break;
@@ -372,9 +369,7 @@ void IRAM_ATTR TimerSecond_ISR(void *param)
       // Notify signal modulation task to re-enable carrier after 500ms
       if (signal_task_cached != NULL)
       {
-          BaseType_t higher_priority_task_woken = pdFALSE;
-          xTaskNotifyFromISR(signal_task_cached, SIGNAL_NOTIF_BIT1, eSetBits, &higher_priority_task_woken);
-          portYIELD_FROM_ISR(higher_priority_task_woken);
+          xTaskNotify(signal_task_cached, SIGNAL_NOTIF_BIT1, eSetBits);
       }
 
   }
@@ -395,9 +390,7 @@ void IRAM_ATTR TimerSecond_ISR(void *param)
       // Notify signal modulation task to re-enable carrier after 800ms
       if (signal_task_cached != NULL)
       {
-          BaseType_t higher_priority_task_woken = pdFALSE;
-          xTaskNotifyFromISR(signal_task_cached, SIGNAL_NOTIF_MARKER, eSetBits, &higher_priority_task_woken);
-          portYIELD_FROM_ISR(higher_priority_task_woken);
+          xTaskNotify(signal_task_cached, SIGNAL_NOTIF_MARKER, eSetBits);
       }
   }
   break;

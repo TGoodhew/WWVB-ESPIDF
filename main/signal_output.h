@@ -27,7 +27,7 @@
 #define TIMER_BIT1_DURATION_US 500000    // 0.5 second - WWVB bit '1' reduced power duration
 #define TIMER_MARKER_DURATION_US 800000  // 0.8 second - WWVB marker reduced power duration
 
-// Signal modulation task notification values (for ISR use)
+// Signal modulation task notification values (for timer callback use)
 #define SIGNAL_NOTIF_BIT0 (1 << 0)       // Bit 0: 200ms delay
 #define SIGNAL_NOTIF_BIT1 (1 << 1)       // Bit 1: 500ms delay
 #define SIGNAL_NOTIF_MARKER (1 << 2)     // Marker: 800ms delay
@@ -49,9 +49,11 @@ void Setup60KHzOutput(void);
 
 /*
  * Setup timer and signal modulation task for WWVB signal generation
- * Creates the second timer (ESP_TIMER_ISR) and a dedicated FreeRTOS task.
- * The task handles carrier re-enable operations using FreeRTOS delays,
- * avoiding nested timer operations that cause spinlock contention with WiFi.
+ * Creates the second timer using the default dispatch method (ESP_TIMER_TASK)
+ * and a dedicated FreeRTOS task. The timer callback runs in the timer task
+ * context rather than ISR context. The task handles carrier re-enable
+ * operations using FreeRTOS delays, avoiding nested timer operations that
+ * cause spinlock contention with WiFi.
  */
 void SetupTimers(void);
 
@@ -94,7 +96,7 @@ QueueHandle_t GetDebugQueue(void);
 void InitDebugQueue(void);
 
 /*
- * Get signal task handle for ISR use
+ * Get signal task handle for timer callback use
  * Returns the handle to the signal modulation task for task notifications.
  * 
  * @return Task handle, or NULL if not initialized
