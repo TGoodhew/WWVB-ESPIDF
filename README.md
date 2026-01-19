@@ -76,12 +76,12 @@ main/
 WWVB encodes data using **pulse width modulation** where the duration of reduced power determines the bit value:
 
 ```
-Bit Value '0':     |████|____| 0.2s low, 0.8s high (200ms reduced power)
-Bit Value '1':     |█████|___| 0.5s low, 0.5s high (500ms reduced power)
+Bit Value '0':     |██|______| 0.2s low, 0.8s high (200ms reduced power)
+Bit Value '1':     |████|____| 0.5s low, 0.5s high (500ms reduced power)
 Position Marker:   |███████|_| 0.8s low, 0.2s high (800ms reduced power)
 
-█ = Full carrier power (50% PWM duty cycle at 60 kHz)
-_ = Reduced carrier power (0% PWM duty cycle)
+_ = Full carrier power (50% PWM duty cycle at 60 kHz)
+█ = Reduced carrier power (0% PWM duty cycle)
 ```
 
 **Why these specific timings?**
