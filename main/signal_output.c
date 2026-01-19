@@ -15,6 +15,10 @@
 // Task and Buffer Size Constants
 #define DEBUG_TASK_STACK_SIZE 2048       // Stack size for debug task
 #define SIGNAL_TASK_STACK_SIZE 3072      // Stack size for signal modulation task
+#define SIGNAL_TASK_PRIORITY 6           // Priority for signal modulation task (higher than debug)
+
+// Task notification constants
+#define TASK_NOTIF_CLEAR_ALL 0xFFFFFFFF  // Clear all notification bits
 
 // Signal modulation task notification values
 #define SIGNAL_NOTIF_BIT0 (1 << 0)       // Bit 0: 200ms delay
@@ -109,7 +113,7 @@ static void signal_modulation_task(void *pvParameters)
     while (1) {
         // Wait for notification from second timer ISR
         // ISR will send notification instead of starting nested timers
-        if (xTaskNotifyWait(0, 0xFFFFFFFF, &notification_value, portMAX_DELAY) == pdTRUE) {
+        if (xTaskNotifyWait(0, TASK_NOTIF_CLEAR_ALL, &notification_value, portMAX_DELAY) == pdTRUE) {
             // Determine delay based on bit type
             TickType_t delay_ticks;
             
@@ -240,7 +244,7 @@ void SetupTimers(void)
         "signal_mod",
         SIGNAL_TASK_STACK_SIZE,
         NULL,
-        6,  // Priority 6 (higher than debug task, ensures timely carrier re-enable)
+        SIGNAL_TASK_PRIORITY,  // Higher than debug task, ensures timely carrier re-enable
         &signal_task_handle
     );
     

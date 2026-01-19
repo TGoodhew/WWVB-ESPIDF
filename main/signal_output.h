@@ -27,6 +27,11 @@
 #define TIMER_BIT1_DURATION_US 500000    // 0.5 second - WWVB bit '1' reduced power duration
 #define TIMER_MARKER_DURATION_US 800000  // 0.8 second - WWVB marker reduced power duration
 
+// Signal modulation task notification values (for ISR use)
+#define SIGNAL_NOTIF_BIT0 (1 << 0)       // Bit 0: 200ms delay
+#define SIGNAL_NOTIF_BIT1 (1 << 1)       // Bit 1: 500ms delay
+#define SIGNAL_NOTIF_MARKER (1 << 2)     // Marker: 800ms delay
+
 // Debug queue for ISR to task communication
 #define DEBUG_QUEUE_SIZE 10
 

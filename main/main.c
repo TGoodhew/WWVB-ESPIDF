@@ -351,7 +351,7 @@ void IRAM_ATTR TimerSecond_ISR(void *param)
       if (signal_task_cached != NULL)
       {
           BaseType_t higher_priority_task_woken = pdFALSE;
-          xTaskNotifyFromISR(signal_task_cached, (1 << 0), eSetBits, &higher_priority_task_woken);
+          xTaskNotifyFromISR(signal_task_cached, SIGNAL_NOTIF_BIT0, eSetBits, &higher_priority_task_woken);
           portYIELD_FROM_ISR(higher_priority_task_woken);
       }
     }
@@ -373,7 +373,7 @@ void IRAM_ATTR TimerSecond_ISR(void *param)
       if (signal_task_cached != NULL)
       {
           BaseType_t higher_priority_task_woken = pdFALSE;
-          xTaskNotifyFromISR(signal_task_cached, (1 << 1), eSetBits, &higher_priority_task_woken);
+          xTaskNotifyFromISR(signal_task_cached, SIGNAL_NOTIF_BIT1, eSetBits, &higher_priority_task_woken);
           portYIELD_FROM_ISR(higher_priority_task_woken);
       }
 
@@ -396,7 +396,7 @@ void IRAM_ATTR TimerSecond_ISR(void *param)
       if (signal_task_cached != NULL)
       {
           BaseType_t higher_priority_task_woken = pdFALSE;
-          xTaskNotifyFromISR(signal_task_cached, (1 << 2), eSetBits, &higher_priority_task_woken);
+          xTaskNotifyFromISR(signal_task_cached, SIGNAL_NOTIF_MARKER, eSetBits, &higher_priority_task_woken);
           portYIELD_FROM_ISR(higher_priority_task_woken);
       }
   }
