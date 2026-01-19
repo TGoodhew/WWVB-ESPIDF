@@ -51,7 +51,7 @@
  * @param year Full 4-digit year (e.g., 2024)
  * @return true if the year is a leap year, false otherwise
  */
-bool isLeapYear(int year)
+bool IsLeapYear(int year)
 {
     // A year is a leap year if:
     // - It's divisible by 4, AND
@@ -92,18 +92,18 @@ bool isLeapYear(int year)
  * @param startDay Output: day-of-year when DST begins (e.g., 70 for March 10)
  * @param endDay Output: day-of-year when DST ends (e.g., 308 for November 3)
  */
-void calculateDSTDays(int year, int *startDay, int *endDay)
+void CalculateDSTDays(int year, int *start_day, int *end_day)
 {
     // Validate input parameters
-    if (startDay == NULL || endDay == NULL)
+    if (start_day == NULL || end_day == NULL)
     {
-        ESP_LOGE("DST", "calculateDSTDays: NULL pointer provided");
+        ESP_LOGE("DST", "CalculateDSTDays: NULL pointer provided");
         return;
     }
     
     // Determine number of days in February for this year
-    const bool leap = isLeapYear(year);
-    const int daysInFeb = leap ? DAYS_IN_FEBRUARY_LEAP : DAYS_IN_FEBRUARY_NORMAL;
+    const bool leap = IsLeapYear(year);
+    const int days_in_feb = leap ? DAYS_IN_FEBRUARY_LEAP : DAYS_IN_FEBRUARY_NORMAL;
     
     // === Calculate day-of-week for January 1 using Zeller's congruence ===
     // In Zeller's algorithm, January is treated as month 13 of the previous year
@@ -126,7 +126,7 @@ void calculateDSTDays(int year, int *startDay, int *endDay)
     
     // === Calculate Second Sunday in March ===
     // Find day-of-year for March 1
-    const int march1_doy = DAYS_IN_JANUARY + daysInFeb + FIRST_DAY_OF_MONTH;
+    const int march1_doy = DAYS_IN_JANUARY + days_in_feb + FIRST_DAY_OF_MONTH;
     
     // Calculate day-of-week for March 1 based on January 1
     // (Add days elapsed since Jan 1, minus 1 because we're counting from day 1)
@@ -140,11 +140,11 @@ void calculateDSTDays(int year, int *startDay, int *endDay)
     const int second_sunday_date = FIRST_DAY_OF_MONTH + days_to_first_sunday + DST_SECOND_SUNDAY_OFFSET;
     
     // Convert to day-of-year (subtract 1 because march1_doy already includes March 1)
-    *startDay = march1_doy - 1 + second_sunday_date;
+    *start_day = march1_doy - 1 + second_sunday_date;
     
     // === Calculate First Sunday in November ===
     // Find day-of-year for November 1
-    const int nov1_doy = DAYS_IN_JANUARY + daysInFeb + DAYS_IN_MARCH + DAYS_IN_APRIL + 
+    const int nov1_doy = DAYS_IN_JANUARY + days_in_feb + DAYS_IN_MARCH + DAYS_IN_APRIL + 
                          DAYS_IN_MAY + DAYS_IN_JUNE + DAYS_IN_JULY + DAYS_IN_AUGUST + 
                          DAYS_IN_SEPTEMBER + DAYS_IN_OCTOBER + FIRST_DAY_OF_MONTH;
     
@@ -158,7 +158,7 @@ void calculateDSTDays(int year, int *startDay, int *endDay)
     const int first_sunday_date = FIRST_DAY_OF_MONTH + days_to_first_sunday_nov;
     
     // Convert to day-of-year
-    *endDay = nov1_doy - 1 + first_sunday_date;
+    *end_day = nov1_doy - 1 + first_sunday_date;
 }
 
 /**
@@ -187,13 +187,13 @@ void calculateDSTDays(int year, int *startDay, int *endDay)
  * @param daysPassed Day of year (1-366, where 1 = January 1)
  * @return true if DST is in effect on this day, false otherwise
  */
-bool isDaylightSavingTime(int year, int daysPassed)
+bool IsDaylightSavingTime(int year, int days_passed)
 {
-    int startDay, endDay;
-    calculateDSTDays(year, &startDay, &endDay);
+    int start_day, end_day;
+    CalculateDSTDays(year, &start_day, &end_day);
     
     // DST is in effect if current day is >= start day AND < end day
-    // Note: Uses < (not <=) for endDay because DST ends at 2 AM, so the full day
+    // Note: Uses < (not <=) for end_day because DST ends at 2 AM, so the full day
     // after transition is already in Standard Time
-    return (daysPassed >= startDay && daysPassed < endDay);
+    return (days_passed >= start_day && days_passed < end_day);
 }

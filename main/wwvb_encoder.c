@@ -167,37 +167,37 @@ uint16_t BitsEncoder(uint16_t n)
  * @param year Full 4-digit year (WWVB_MIN_YEAR to WWVB_MAX_YEAR, e.g., 2024)
  * @param signal Pointer to 60-byte WWVB signal array to update
  */
-void encodeYear(uint16_t year, volatile uint8_t *signal)
+void EncodeYear(uint16_t year, volatile uint8_t *signal)
 {
     // Validate input parameters
     if (signal == NULL)
     {
-        ESP_LOGE("WWVB", "encodeYear: signal pointer is NULL");
+        ESP_LOGE("WWVB", "EncodeYear: signal pointer is NULL");
         return;
     }
     
     if (year < WWVB_MIN_YEAR || year > WWVB_MAX_YEAR)
     {
-        ESP_LOGE("WWVB", "encodeYear: year %d is out of valid range (%d-%d)", 
+        ESP_LOGE("WWVB", "EncodeYear: year %d is out of valid range (%d-%d)", 
                  year, WWVB_MIN_YEAR, WWVB_MAX_YEAR);
         return;
     }
 
-    const int yearBCD = year % BCD_DIVISOR_100;  // Convert to 2-digit year (e.g., 2024 → 24)
-    const uint16_t bitsResult = BitsEncoder(yearBCD);  // Convert to BCD (e.g., 24 → 0x0024)
+    const int year_bcd = year % BCD_DIVISOR_100;  // Convert to 2-digit year (e.g., 2024 → 24)
+    const uint16_t bits_result = BitsEncoder(year_bcd);  // Convert to BCD (e.g., 24 → 0x0024)
 
     // Encode year into WWVB signal positions 45-48 and 50-53 (8 bits total)
     // Extract and write individual bits from BCD result to frame positions
     // Bits are written in MSB-to-LSB order within each nibble
-    signal[WWVB_YEAR_BIT_45] = (bitsResult & 0x80) >> 7;  // Upper nibble bit 3 (MSB)
-    signal[WWVB_YEAR_BIT_46] = (bitsResult & 0x40) >> 6;  // Upper nibble bit 2
-    signal[WWVB_YEAR_BIT_47] = (bitsResult & 0x20) >> 5;  // Upper nibble bit 1
-    signal[WWVB_YEAR_BIT_48] = (bitsResult & 0x10) >> 4;  // Upper nibble bit 0 (LSB)
+    signal[WWVB_YEAR_BIT_45] = (bits_result & 0x80) >> 7;  // Upper nibble bit 3 (MSB)
+    signal[WWVB_YEAR_BIT_46] = (bits_result & 0x40) >> 6;  // Upper nibble bit 2
+    signal[WWVB_YEAR_BIT_47] = (bits_result & 0x20) >> 5;  // Upper nibble bit 1
+    signal[WWVB_YEAR_BIT_48] = (bits_result & 0x10) >> 4;  // Upper nibble bit 0 (LSB)
     // Position 49 is a marker bit
-    signal[WWVB_YEAR_BIT_50] = (bitsResult & 0x08) >> 3;  // Lower nibble bit 3 (MSB)
-    signal[WWVB_YEAR_BIT_51] = (bitsResult & 0x04) >> 2;  // Lower nibble bit 2
-    signal[WWVB_YEAR_BIT_52] = (bitsResult & 0x02) >> 1;  // Lower nibble bit 1
-    signal[WWVB_YEAR_BIT_53] = (bitsResult & 0x01);       // Lower nibble bit 0 (LSB)
+    signal[WWVB_YEAR_BIT_50] = (bits_result & 0x08) >> 3;  // Lower nibble bit 3 (MSB)
+    signal[WWVB_YEAR_BIT_51] = (bits_result & 0x04) >> 2;  // Lower nibble bit 2
+    signal[WWVB_YEAR_BIT_52] = (bits_result & 0x02) >> 1;  // Lower nibble bit 1
+    signal[WWVB_YEAR_BIT_53] = (bits_result & 0x01);       // Lower nibble bit 0 (LSB)
 }
 
 /**
@@ -224,38 +224,38 @@ void encodeYear(uint16_t year, volatile uint8_t *signal)
  * @param dayOfYear Day of year (WWVB_MIN_DAY_OF_YEAR to WWVB_MAX_DAY_OF_YEAR, 1-366)
  * @param signal Pointer to 60-byte WWVB signal array to update
  */
-void encodeDayOfYear(uint16_t dayOfYear, volatile uint8_t *signal)
+void EncodeDayOfYear(uint16_t day_of_year, volatile uint8_t *signal)
 {
     // Validate input parameters
     if (signal == NULL)
     {
-        ESP_LOGE("WWVB", "encodeDayOfYear: signal pointer is NULL");
+        ESP_LOGE("WWVB", "EncodeDayOfYear: signal pointer is NULL");
         return;
     }
     
-    if (dayOfYear < WWVB_MIN_DAY_OF_YEAR || dayOfYear > WWVB_MAX_DAY_OF_YEAR)
+    if (day_of_year < WWVB_MIN_DAY_OF_YEAR || day_of_year > WWVB_MAX_DAY_OF_YEAR)
     {
-        ESP_LOGE("WWVB", "encodeDayOfYear: dayOfYear %d is out of valid range (%d-%d)", 
-                 dayOfYear, WWVB_MIN_DAY_OF_YEAR, WWVB_MAX_DAY_OF_YEAR);
+        ESP_LOGE("WWVB", "EncodeDayOfYear: day_of_year %d is out of valid range (%d-%d)", 
+                 day_of_year, WWVB_MIN_DAY_OF_YEAR, WWVB_MAX_DAY_OF_YEAR);
         return;
     }
 
-    const uint16_t bitsResult = BitsEncoder(dayOfYear);  // Convert to BCD (e.g., 365 → 0x0365)
+    const uint16_t bits_result = BitsEncoder(day_of_year);  // Convert to BCD (e.g., 365 → 0x0365)
 
     // Encode day of year into WWVB signal positions 22-23, 25-28, 30-33 (10 bits total)
     // Markers at positions 19, 24, and 29 break up the encoding
-    signal[WWVB_DAY_BIT_22] = (bitsResult & 0x0200) >> 9;  // Hundreds digit bit 1
-    signal[WWVB_DAY_BIT_23] = (bitsResult & 0x0100) >> 8;  // Hundreds digit bit 0
+    signal[WWVB_DAY_BIT_22] = (bits_result & 0x0200) >> 9;  // Hundreds digit bit 1
+    signal[WWVB_DAY_BIT_23] = (bits_result & 0x0100) >> 8;  // Hundreds digit bit 0
     // Position 24 is reserved (always 0)
-    signal[WWVB_DAY_BIT_25] = (bitsResult & 0x0080) >> 7;  // Tens digit bit 3 (MSB)
-    signal[WWVB_DAY_BIT_26] = (bitsResult & 0x0040) >> 6;  // Tens digit bit 2
-    signal[WWVB_DAY_BIT_27] = (bitsResult & 0x0020) >> 5;  // Tens digit bit 1
-    signal[WWVB_DAY_BIT_28] = (bitsResult & 0x0010) >> 4;  // Tens digit bit 0 (LSB)
+    signal[WWVB_DAY_BIT_25] = (bits_result & 0x0080) >> 7;  // Tens digit bit 3 (MSB)
+    signal[WWVB_DAY_BIT_26] = (bits_result & 0x0040) >> 6;  // Tens digit bit 2
+    signal[WWVB_DAY_BIT_27] = (bits_result & 0x0020) >> 5;  // Tens digit bit 1
+    signal[WWVB_DAY_BIT_28] = (bits_result & 0x0010) >> 4;  // Tens digit bit 0 (LSB)
     // Position 29 is a marker bit
-    signal[WWVB_DAY_BIT_30] = (bitsResult & 0x0008) >> 3;  // Ones digit bit 3 (MSB)
-    signal[WWVB_DAY_BIT_31] = (bitsResult & 0x0004) >> 2;  // Ones digit bit 2
-    signal[WWVB_DAY_BIT_32] = (bitsResult & 0x0002) >> 1;  // Ones digit bit 1
-    signal[WWVB_DAY_BIT_33] = (bitsResult & 0x0001);       // Ones digit bit 0 (LSB)
+    signal[WWVB_DAY_BIT_30] = (bits_result & 0x0008) >> 3;  // Ones digit bit 3 (MSB)
+    signal[WWVB_DAY_BIT_31] = (bits_result & 0x0004) >> 2;  // Ones digit bit 2
+    signal[WWVB_DAY_BIT_32] = (bits_result & 0x0002) >> 1;  // Ones digit bit 1
+    signal[WWVB_DAY_BIT_33] = (bits_result & 0x0001);       // Ones digit bit 0 (LSB)
 }
 
 /**
@@ -278,32 +278,32 @@ void encodeDayOfYear(uint16_t dayOfYear, volatile uint8_t *signal)
  * @param hour Hour in 24-hour format (0 to WWVB_MAX_HOUR, 0-23)
  * @param signal Pointer to 60-byte WWVB signal array to update
  */
-void encodeHour(uint8_t hour, volatile uint8_t *signal)
+void EncodeHour(uint8_t hour, volatile uint8_t *signal)
 {
     // Validate input parameters
     if (signal == NULL)
     {
-        ESP_LOGE("WWVB", "encodeHour: signal pointer is NULL");
+        ESP_LOGE("WWVB", "EncodeHour: signal pointer is NULL");
         return;
     }
     
     if (hour > WWVB_MAX_HOUR)
     {
-        ESP_LOGE("WWVB", "encodeHour: hour %d is out of valid range (0-%d)", hour, WWVB_MAX_HOUR);
+        ESP_LOGE("WWVB", "EncodeHour: hour %d is out of valid range (0-%d)", hour, WWVB_MAX_HOUR);
         return;
     }
 
-    const uint16_t bitsResult = BitsEncoder(hour);  // Convert to BCD (e.g., 13 → 0x0013)
+    const uint16_t bits_result = BitsEncoder(hour);  // Convert to BCD (e.g., 13 → 0x0013)
 
     // Encode hour into WWVB signal positions 12-13 and 15-18 (6 bits total)
     // Position 14 is reserved (always 0)
-    signal[WWVB_HOUR_BIT_12] = (bitsResult & 0x20) >> 5;  // Tens digit bit 1
-    signal[WWVB_HOUR_BIT_13] = (bitsResult & 0x10) >> 4;  // Tens digit bit 0
+    signal[WWVB_HOUR_BIT_12] = (bits_result & 0x20) >> 5;  // Tens digit bit 1
+    signal[WWVB_HOUR_BIT_13] = (bits_result & 0x10) >> 4;  // Tens digit bit 0
     // Position 14 is reserved
-    signal[WWVB_HOUR_BIT_15] = (bitsResult & 0x08) >> 3;  // Ones digit bit 3 (MSB)
-    signal[WWVB_HOUR_BIT_16] = (bitsResult & 0x04) >> 2;  // Ones digit bit 2
-    signal[WWVB_HOUR_BIT_17] = (bitsResult & 0x02) >> 1;  // Ones digit bit 1
-    signal[WWVB_HOUR_BIT_18] = (bitsResult & 0x01);       // Ones digit bit 0 (LSB)
+    signal[WWVB_HOUR_BIT_15] = (bits_result & 0x08) >> 3;  // Ones digit bit 3 (MSB)
+    signal[WWVB_HOUR_BIT_16] = (bits_result & 0x04) >> 2;  // Ones digit bit 2
+    signal[WWVB_HOUR_BIT_17] = (bits_result & 0x02) >> 1;  // Ones digit bit 1
+    signal[WWVB_HOUR_BIT_18] = (bits_result & 0x01);       // Ones digit bit 0 (LSB)
 }
 
 /**
@@ -341,35 +341,35 @@ void encodeHour(uint8_t hour, volatile uint8_t *signal)
  * @param minute Minute value (0 to WWVB_MAX_MINUTE, 0-59)
  * @param signal Pointer to 60-byte WWVB signal array to update
  */
-void encodeMinute(uint8_t minute, volatile uint8_t *signal)
+void EncodeMinute(uint8_t minute, volatile uint8_t *signal)
 {
     // Validate input parameters
     if (signal == NULL)
     {
-        ESP_LOGE("WWVB", "encodeMinute: signal pointer is NULL");
+        ESP_LOGE("WWVB", "EncodeMinute: signal pointer is NULL");
         return;
     }
     
     if (minute > WWVB_MAX_MINUTE)
     {
-        ESP_LOGE("WWVB", "encodeMinute: minute %d is out of valid range (0-%d)", minute, WWVB_MAX_MINUTE);
+        ESP_LOGE("WWVB", "EncodeMinute: minute %d is out of valid range (0-%d)", minute, WWVB_MAX_MINUTE);
         return;
     }
 
-    const uint16_t bitsResult = BitsEncoder(minute);  // Convert to BCD (e.g., 42 → 0x0042)
+    const uint16_t bits_result = BitsEncoder(minute);  // Convert to BCD (e.g., 42 → 0x0042)
 
     // Encode minute into WWVB signal positions 1-3 and 5-8 (7 bits total)
     // Position 0 is a marker, Position 4 is reserved (always 0)
     // Extract ones digit (bits 6, 5, 4 of BCD result)
-    signal[WWVB_MINUTE_BIT_1] = (bitsResult & 0x40) >> 6;  // Bit 6 (ones digit bit 2)
-    signal[WWVB_MINUTE_BIT_2] = (bitsResult & 0x20) >> 5;  // Bit 5 (ones digit bit 1)
-    signal[WWVB_MINUTE_BIT_3] = (bitsResult & 0x10) >> 4;  // Bit 4 (ones digit bit 0)
+    signal[WWVB_MINUTE_BIT_1] = (bits_result & 0x40) >> 6;  // Bit 6 (ones digit bit 2)
+    signal[WWVB_MINUTE_BIT_2] = (bits_result & 0x20) >> 5;  // Bit 5 (ones digit bit 1)
+    signal[WWVB_MINUTE_BIT_3] = (bits_result & 0x10) >> 4;  // Bit 4 (ones digit bit 0)
     // Position 4 is reserved
     // Extract tens digit (bits 3, 2, 1, 0 of BCD result)
-    signal[WWVB_MINUTE_BIT_5] = (bitsResult & 0x08) >> 3;  // Bit 3 (tens digit bit 3, MSB)
-    signal[WWVB_MINUTE_BIT_6] = (bitsResult & 0x04) >> 2;  // Bit 2 (tens digit bit 2)
-    signal[WWVB_MINUTE_BIT_7] = (bitsResult & 0x02) >> 1;  // Bit 1 (tens digit bit 1)
-    signal[WWVB_MINUTE_BIT_8] = (bitsResult & 0x01);       // Bit 0 (tens digit bit 0, LSB)
+    signal[WWVB_MINUTE_BIT_5] = (bits_result & 0x08) >> 3;  // Bit 3 (tens digit bit 3, MSB)
+    signal[WWVB_MINUTE_BIT_6] = (bits_result & 0x04) >> 2;  // Bit 2 (tens digit bit 2)
+    signal[WWVB_MINUTE_BIT_7] = (bits_result & 0x02) >> 1;  // Bit 1 (tens digit bit 1)
+    signal[WWVB_MINUTE_BIT_8] = (bits_result & 0x01);       // Bit 0 (tens digit bit 0, LSB)
 }
 
 /**
@@ -390,12 +390,12 @@ void encodeMinute(uint8_t minute, volatile uint8_t *signal)
  * 
  * @param signal Pointer to 60-byte WWVB signal array to update
  */
-void setMarkersAndIndicators(volatile uint8_t *signal)
+void SetMarkersAndIndicators(volatile uint8_t *signal)
 {
     // Validate input parameters
     if (signal == NULL)
     {
-        ESP_LOGE("WWVB", "setMarkersAndIndicators: signal pointer is NULL");
+        ESP_LOGE("WWVB", "SetMarkersAndIndicators: signal pointer is NULL");
         return;
     }
 
@@ -438,12 +438,12 @@ void setMarkersAndIndicators(volatile uint8_t *signal)
  * 
  * @param signal Pointer to 60-byte WWVB signal array to update
  */
-void setDUT1(volatile uint8_t *signal)
+void SetDUT1(volatile uint8_t *signal)
 {
     // Validate input parameters
     if (signal == NULL)
     {
-        ESP_LOGE("WWVB", "setDUT1: signal pointer is NULL");
+        ESP_LOGE("WWVB", "SetDUT1: signal pointer is NULL");
         return;
     }
 
@@ -482,18 +482,18 @@ void setDUT1(volatile uint8_t *signal)
  * @param year Full 4-digit year (WWVB_MIN_YEAR to WWVB_MAX_YEAR)
  * @param signal Pointer to 60-byte WWVB signal array to update
  */
-void setLeapYear(uint16_t year, volatile uint8_t *signal)
+void SetLeapYear(uint16_t year, volatile uint8_t *signal)
 {
     // Validate input parameters
     if (signal == NULL)
     {
-        ESP_LOGE("WWVB", "setLeapYear: signal pointer is NULL");
+        ESP_LOGE("WWVB", "SetLeapYear: signal pointer is NULL");
         return;
     }
     
     if (year < WWVB_MIN_YEAR || year > WWVB_MAX_YEAR)
     {
-        ESP_LOGE("WWVB", "setLeapYear: year %d is out of valid range (%d-%d)", 
+        ESP_LOGE("WWVB", "SetLeapYear: year %d is out of valid range (%d-%d)", 
                  year, WWVB_MIN_YEAR, WWVB_MAX_YEAR);
         return;
     }
@@ -536,16 +536,16 @@ void setLeapYear(uint16_t year, volatile uint8_t *signal)
  * @param IsLeap true if leap second will occur at end of current month, false otherwise
  * @param signal Pointer to 60-byte WWVB signal array to update
  */
-void setLeapSecond(bool IsLeap, volatile uint8_t *signal)
+void SetLeapSecond(bool is_leap, volatile uint8_t *signal)
 {
     // Validate input parameters
     if (signal == NULL)
     {
-        ESP_LOGE("WWVB", "setLeapSecond: signal pointer is NULL");
+        ESP_LOGE("WWVB", "SetLeapSecond: signal pointer is NULL");
         return;
     }
 
-    signal[WWVB_LEAP_SECOND_BIT] = IsLeap ? WWVB_BIT_ONE : WWVB_BIT_ZERO;
+    signal[WWVB_LEAP_SECOND_BIT] = is_leap ? WWVB_BIT_ONE : WWVB_BIT_ZERO;
 }
 
 /**
@@ -569,18 +569,18 @@ void setLeapSecond(bool IsLeap, volatile uint8_t *signal)
  * @param IsDST true if DST is currently in effect, false for Standard Time
  * @param signal Pointer to 60-byte WWVB signal array to update
  */
-void setDST(bool IsDST, volatile uint8_t *signal)
+void SetDST(bool is_dst, volatile uint8_t *signal)
 {
     // Validate input parameters
     if (signal == NULL)
     {
-        ESP_LOGE("WWVB", "setDST: signal pointer is NULL");
+        ESP_LOGE("WWVB", "SetDST: signal pointer is NULL");
         return;
     }
 
     // Both DST bits must be set to the same value
     // 1,1 = DST in effect; 0,0 = Standard time in effect
-    const uint8_t dstValue = IsDST ? WWVB_BIT_ONE : WWVB_BIT_ZERO;
-    signal[WWVB_DST_BIT_57] = dstValue;
-    signal[WWVB_DST_BIT_58] = dstValue;
+    const uint8_t dst_value = is_dst ? WWVB_BIT_ONE : WWVB_BIT_ZERO;
+    signal[WWVB_DST_BIT_57] = dst_value;
+    signal[WWVB_DST_BIT_58] = dst_value;
 }

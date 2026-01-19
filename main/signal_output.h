@@ -78,7 +78,7 @@ void TimerSignalReenable_ISR(void *param);
  * 
  * @param pvParameters Task parameters (unused)
  */
-void debug_task(void *pvParameters);
+void DebugTask(void *pvParameters);
 
 /*
  * Get the debug queue handle

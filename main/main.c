@@ -217,14 +217,14 @@ void app_main(void)
 
 bool SetupWWVBArray(void)
 {
-    time_t rawtime;
-    struct tm *utcTime;
+    time_t raw_time;
+    struct tm *utc_time;
 
-    time(&rawtime);
-    utcTime = gmtime(&rawtime);
+    time(&raw_time);
+    utc_time = gmtime(&raw_time);
 
     // Validate time values before encoding
-    if (utcTime == NULL)
+    if (utc_time == NULL)
     {
         ESP_LOGE("WWVB", "Failed to get UTC time, gmtime returned NULL");
         return false;
@@ -232,24 +232,24 @@ bool SetupWWVBArray(void)
     
     // Check for reasonable time values (year should be >= WWVB_MIN_YEAR)
     // If time is before WWVB_MIN_YEAR, it likely means time hasn't been synchronized yet
-    if (utcTime->tm_year + YEAR_OFFSET_1900 < WWVB_MIN_YEAR)
+    if (utc_time->tm_year + YEAR_OFFSET_1900 < WWVB_MIN_YEAR)
     {
         ESP_LOGE("WWVB", "Invalid system time detected (year=%d). Time may not be synchronized.", 
-                 utcTime->tm_year + YEAR_OFFSET_1900);
+                 utc_time->tm_year + YEAR_OFFSET_1900);
         return false;
     }
 
     // Write to the staging array (not the active array being transmitted)
     // The staging array will become active at the next minute boundary
-    encodeYear(utcTime->tm_year + YEAR_OFFSET_1900, wwvb_state.staging);
-    encodeDayOfYear(utcTime->tm_yday + 1, wwvb_state.staging);
-    encodeHour(utcTime->tm_hour, wwvb_state.staging);
-    encodeMinute(utcTime->tm_min, wwvb_state.staging);
-    setMarkersAndIndicators(wwvb_state.staging);
-    setDUT1(wwvb_state.staging); // We're ignoring DUT1 as it has been deprecated and not used in this scenario
-    setLeapYear(utcTime->tm_year + YEAR_OFFSET_1900, wwvb_state.staging);
-    setLeapSecond(false, wwvb_state.staging); // Ignore leap seconds in this scenario
-    setDST(isDaylightSavingTime(utcTime->tm_year + YEAR_OFFSET_1900, utcTime->tm_yday + 1), wwvb_state.staging);
+    EncodeYear(utc_time->tm_year + YEAR_OFFSET_1900, wwvb_state.staging);
+    EncodeDayOfYear(utc_time->tm_yday + 1, wwvb_state.staging);
+    EncodeHour(utc_time->tm_hour, wwvb_state.staging);
+    EncodeMinute(utc_time->tm_min, wwvb_state.staging);
+    SetMarkersAndIndicators(wwvb_state.staging);
+    SetDUT1(wwvb_state.staging); // We're ignoring DUT1 as it has been deprecated and not used in this scenario
+    SetLeapYear(utc_time->tm_year + YEAR_OFFSET_1900, wwvb_state.staging);
+    SetLeapSecond(false, wwvb_state.staging); // Ignore leap seconds in this scenario
+    SetDST(IsDaylightSavingTime(utc_time->tm_year + YEAR_OFFSET_1900, utc_time->tm_yday + 1), wwvb_state.staging);
     
     // Signal that the staging array is ready to be swapped at the next minute boundary
     wwvb_state.swap_pending = true;

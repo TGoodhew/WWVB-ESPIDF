@@ -52,14 +52,14 @@ void InitDebugQueue(void)
         ESP_LOGE("SignalOutput", "Failed to create debug queue");
     } else {
         // Create debug task to handle logging from ISR
-        BaseType_t task_created = xTaskCreate(debug_task, "debug_task", DEBUG_TASK_STACK_SIZE, NULL, 5, NULL);
+        BaseType_t task_created = xTaskCreate(DebugTask, "debug_task", DEBUG_TASK_STACK_SIZE, NULL, 5, NULL);
         if (task_created != pdPASS) {
             ESP_LOGE("SignalOutput", "Failed to create debug task");
         }
     }
 }
 
-void debug_task(void *pvParameters)
+void DebugTask(void *pvParameters)
 {
     debug_msg_t msg;
     

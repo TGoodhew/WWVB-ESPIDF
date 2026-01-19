@@ -137,26 +137,26 @@ static void minute_boundary_sync_task(void *pvParameters)
     
     while (true)
     {
-        time_t rawtime;
-        struct tm *utcTime;
+        time_t raw_time;
+        struct tm *utc_time;
         
-        time(&rawtime);
-        utcTime = gmtime(&rawtime);
+        time(&raw_time);
+        utc_time = gmtime(&raw_time);
         
-        if (utcTime == NULL)
+        if (utc_time == NULL)
         {
             ESP_LOGE("SNTP", "Failed to get UTC time, gmtime returned NULL");
             vTaskDelay(pdMS_TO_TICKS(ERROR_RETRY_INTERVAL_MS)); // Wait and retry
             continue;
         }
         
-        const int current_second = utcTime->tm_sec;
+        const int current_second = utc_time->tm_sec;
         
         // Check if we're at the start of a minute (second 0)
         if (current_second == 0)
         {
             ESP_LOGI("SNTP", "Minute boundary reached at %02d:%02d:%02d UTC", 
-                     utcTime->tm_hour, utcTime->tm_min, utcTime->tm_sec);
+                     utc_time->tm_hour, utc_time->tm_min, utc_time->tm_sec);
             break;
         }
         
@@ -262,14 +262,14 @@ void SNTP_callback(struct timeval *tv)
  */
 void LogCurrentTime(void)
 {
-    time_t rawtime;
-    struct tm *utcTime;
+    time_t raw_time;
+    struct tm *utc_time;
 
-    time(&rawtime);
-    utcTime = gmtime(&rawtime);
+    time(&raw_time);
+    utc_time = gmtime(&raw_time);
 
     // Validate gmtime() return value
-    if (utcTime == NULL)
+    if (utc_time == NULL)
     {
         ESP_LOGE("Time", "Failed to get UTC time, gmtime returned NULL");
         return;
@@ -277,7 +277,7 @@ void LogCurrentTime(void)
 
     // Format the time as a string
     char strftime_buf[TIME_STRING_BUFFER_SIZE];
-    strftime(strftime_buf, sizeof(strftime_buf), "%c", utcTime);
+    strftime(strftime_buf, sizeof(strftime_buf), "%c", utc_time);
 
     // Write the system time as a log entry
     ESP_LOGI("Time", "Current system time: %s", strftime_buf);
