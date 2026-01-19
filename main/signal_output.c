@@ -248,6 +248,7 @@ void SetupTimers(void)
             ESP_ERROR_CHECK(esp_timer_delete(timers.second));
             timers.second = NULL;
         }
+        signal_task_handle = NULL;  // Ensure handle is NULL on failure
         return;
     } else {
         ESP_LOGI("SignalOutput", "Signal modulation task created successfully");
