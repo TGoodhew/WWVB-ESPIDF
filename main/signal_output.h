@@ -10,6 +10,7 @@
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
+#include <freertos/task.h>
 #include <esp_timer.h>
 
 // WWVB Signal Constants
@@ -42,9 +43,10 @@ typedef struct {
 void Setup60KHzOutput(void);
 
 /*
- * Setup all timers for WWVB signal generation
- * Creates timers for bit0 (0.2s), bit1 (0.5s), marker (0.8s), and second intervals.
- * These timers control the reduced-power periods in the WWVB signal.
+ * Setup timer and signal modulation task for WWVB signal generation
+ * Creates the second timer (ESP_TIMER_ISR) and a dedicated FreeRTOS task.
+ * The task handles carrier re-enable operations using FreeRTOS delays,
+ * avoiding nested timer operations that cause spinlock contention with WiFi.
  */
 void SetupTimers(void);
 
@@ -61,15 +63,6 @@ void StartSecondTimer(void);
  * Sets PWM duty cycle to 0% to reduce carrier amplitude.
  */
 void ZeroCarrier(void);
-
-/*
- * Timer ISR to re-enable the carrier signal
- * Called after bit/marker reduced power period completes.
- * Restores PWM duty cycle to 50% for full carrier power.
- * 
- * @param param Timer parameter (unused)
- */
-void TimerSignalReenable_ISR(void *param);
 
 /*
  * Debug task to handle logging from ISR context
@@ -96,13 +89,11 @@ QueueHandle_t GetDebugQueue(void);
 void InitDebugQueue(void);
 
 /*
- * Get timer handles for ISR use
- * These accessors allow ISR code to access timer handles safely.
+ * Get signal task handle for ISR use
+ * Returns the handle to the signal modulation task for task notifications.
  * 
- * @return Timer handle, or NULL if not initialized
+ * @return Task handle, or NULL if not initialized
  */
-esp_timer_handle_t GetBit0Timer(void);
-esp_timer_handle_t GetBit1Timer(void);
-esp_timer_handle_t GetMarkerTimer(void);
+TaskHandle_t GetSignalTaskHandle(void);
 
 #endif // SIGNAL_OUTPUT_H

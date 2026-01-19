@@ -134,7 +134,8 @@ bool InitializeWWVBBuffer(void);
  * 
  * ISR Design Considerations:
  * - **IRAM_ATTR**: Function stored in fast instruction RAM for consistent timing
- * - **Timer task context**: Runs in ESP timer task context (ESP_TIMER_ISR not available in v4.x)
+ * - **ESP_TIMER_ISR dispatch**: Runs in true ISR context (ESP-IDF v5.5.2)
+ * - **Task notifications**: Notifies signal task instead of starting nested timers
  * - **Minimal execution time**: All operations are simple and deterministic
  * - **No blocking**: Never waits for anything, returns quickly
  * - **Atomic operations**: Pointer swap is naturally atomic on 32-bit architecture
@@ -287,10 +288,14 @@ void IRAM_ATTR TimerSecond_ISR(void *param)
   (void)param; // Suppress unused parameter warning
   static bool ON;  // Debug LED state
   static QueueHandle_t debug_queue_cached = NULL;
+  static TaskHandle_t signal_task_cached = NULL;
   
-  // Cache the debug queue handle on first call to avoid repeated function calls
+  // Cache handles on first call to avoid repeated function calls
   if (debug_queue_cached == NULL) {
       debug_queue_cached = GetDebugQueue();
+  }
+  if (signal_task_cached == NULL) {
+      signal_task_cached = GetSignalTaskHandle();
   }
   
   // Toggle debug LED to provide visual indication of ISR execution (1 Hz blink)
@@ -302,10 +307,10 @@ void IRAM_ATTR TimerSecond_ISR(void *param)
   // This ensures we transmit a complete, consistent 60-second frame without glitches.
   // Pointer swap is used instead of memcpy because it's atomic and extremely fast (<1µs).
   // Note: No spinlock needed here because:
-  // 1. This callback runs in timer task context (separate from WiFi task)
+  // 1. This callback runs in true ISR context (ESP_TIMER_ISR dispatch in ESP-IDF v5.5.2)
   // 2. Main task only writes to staging buffer (never reads active/staging pointers)
   // 3. Pointer assignments are atomic on 32-bit architecture
-  // 4. Using portENTER_CRITICAL would conflict with WiFi subsystem's own critical sections
+  // 4. No nested timer operations (uses task notifications instead)
   if (wwvb_state.slot == 0 && wwvb_state.swap_pending)
   {
       // Swap pointers: staging becomes active (transmitted), active becomes staging (writable)
@@ -341,11 +346,13 @@ void IRAM_ATTR TimerSecond_ISR(void *param)
       // Bit '0': Reduce carrier power for 0.2 seconds
       ZeroCarrier();
 
-      // Start one-shot timer to restore carrier after 200ms
-      esp_timer_handle_t bit0_timer = GetBit0Timer();
-      if (bit0_timer != NULL)
+      // Notify signal modulation task to re-enable carrier after 200ms
+      // This avoids nested esp_timer_start_once() calls that cause spinlock issues
+      if (signal_task_cached != NULL)
       {
-          esp_timer_start_once(bit0_timer, TIMER_BIT0_DURATION_US); // 200,000 microseconds
+          BaseType_t higher_priority_task_woken = pdFALSE;
+          xTaskNotifyFromISR(signal_task_cached, (1 << 0), eSetBits, &higher_priority_task_woken);
+          portYIELD_FROM_ISR(higher_priority_task_woken);
       }
     }
   break;
@@ -362,11 +369,12 @@ void IRAM_ATTR TimerSecond_ISR(void *param)
       // Bit '1': Reduce carrier power for 0.5 seconds
       ZeroCarrier();
 
-      // Start one-shot timer to restore carrier after 500ms
-      esp_timer_handle_t bit1_timer = GetBit1Timer();
-      if (bit1_timer != NULL)
+      // Notify signal modulation task to re-enable carrier after 500ms
+      if (signal_task_cached != NULL)
       {
-          esp_timer_start_once(bit1_timer, TIMER_BIT1_DURATION_US); // 500,000 microseconds
+          BaseType_t higher_priority_task_woken = pdFALSE;
+          xTaskNotifyFromISR(signal_task_cached, (1 << 1), eSetBits, &higher_priority_task_woken);
+          portYIELD_FROM_ISR(higher_priority_task_woken);
       }
 
   }
@@ -384,11 +392,12 @@ void IRAM_ATTR TimerSecond_ISR(void *param)
       // Marker: Reduce carrier power for 0.8 seconds
       ZeroCarrier();
 
-      // Start one-shot timer to restore carrier after 800ms
-      esp_timer_handle_t marker_timer = GetMarkerTimer();
-      if (marker_timer != NULL)
+      // Notify signal modulation task to re-enable carrier after 800ms
+      if (signal_task_cached != NULL)
       {
-          esp_timer_start_once(marker_timer, TIMER_MARKER_DURATION_US); // 800,000 microseconds
+          BaseType_t higher_priority_task_woken = pdFALSE;
+          xTaskNotifyFromISR(signal_task_cached, (1 << 2), eSetBits, &higher_priority_task_woken);
+          portYIELD_FROM_ISR(higher_priority_task_woken);
       }
   }
   break;
