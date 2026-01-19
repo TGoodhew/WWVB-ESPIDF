@@ -173,26 +173,36 @@ void Setup60KHzOutput(void)
 void SetupTimers(void)
 {
     // Create the 1 Hz second timer (periodic) - drives the entire signal generation
+    // Use ESP_TIMER_ISR dispatch method to run callback from ISR context
+    // This avoids spinlock contention with WiFi subsystem that can occur
+    // when timer callbacks run in timer task context
     const esp_timer_create_args_t timer_second_config = {
         .callback = &TimerSecond_ISR,
+        .dispatch_method = ESP_TIMER_ISR,
         .name = "One Second Timer"};
     ESP_ERROR_CHECK(esp_timer_create(&timer_second_config, &timers.second));
 
     // Create Bit 0 timer (one-shot) - restores carrier after 0.2s reduced power
+    // Use ESP_TIMER_ISR dispatch method to run callback from ISR context
     const esp_timer_create_args_t timer_bit0_config = {
         .callback = &TimerSignalReenable_ISR,
+        .dispatch_method = ESP_TIMER_ISR,
         .name = "Bit 0 Timer"};
     ESP_ERROR_CHECK(esp_timer_create(&timer_bit0_config, &timers.bit0));
             
     // Create Bit 1 timer (one-shot) - restores carrier after 0.5s reduced power
+    // Use ESP_TIMER_ISR dispatch method to run callback from ISR context
     const esp_timer_create_args_t timer_bit1_config = {
         .callback = &TimerSignalReenable_ISR,
+        .dispatch_method = ESP_TIMER_ISR,
         .name = "Bit 1 Timer"};
     ESP_ERROR_CHECK(esp_timer_create(&timer_bit1_config, &timers.bit1));
 
     // Create Marker timer (one-shot) - restores carrier after 0.8s reduced power
+    // Use ESP_TIMER_ISR dispatch method to run callback from ISR context
     const esp_timer_create_args_t timer_bitmarker_config = {
         .callback = &TimerSignalReenable_ISR,
+        .dispatch_method = ESP_TIMER_ISR,
         .name = "Bit Marker Timer"};
     ESP_ERROR_CHECK(esp_timer_create(&timer_bitmarker_config, &timers.marker));
 }
