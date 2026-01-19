@@ -134,6 +134,7 @@ bool InitializeWWVBBuffer(void);
  * 
  * ISR Design Considerations:
  * - **IRAM_ATTR**: Function stored in fast instruction RAM for consistent timing
+ * - **ESP_TIMER_ISR dispatch**: Runs in true ISR context to avoid spinlock contention with WiFi
  * - **Minimal execution time**: All operations are simple and deterministic
  * - **No blocking**: Never waits for anything, returns quickly
  * - **Atomic operations**: Pointer swap is naturally atomic on 32-bit architecture
@@ -301,10 +302,10 @@ void IRAM_ATTR TimerSecond_ISR(void *param)
   // This ensures we transmit a complete, consistent 60-second frame without glitches.
   // Pointer swap is used instead of memcpy because it's atomic and extremely fast (<1µs).
   // Note: No spinlock needed here because:
-  // 1. This pointer swap code only runs in ISR context (never in main task)
+  // 1. This callback runs in true ISR context (ESP_TIMER_ISR dispatch method)
   // 2. Main task only writes to staging buffer (never reads active/staging pointers)
   // 3. Pointer assignments are atomic on 32-bit architecture
-  // 4. Using portENTER_CRITICAL_ISR can conflict with WiFi subsystem's own critical sections
+  // 4. Using portENTER_CRITICAL_ISR would conflict with WiFi subsystem's own critical sections
   if (wwvb_state.slot == 0 && wwvb_state.swap_pending)
   {
       // Swap pointers: staging becomes active (transmitted), active becomes staging (writable)
