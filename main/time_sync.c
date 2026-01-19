@@ -190,7 +190,7 @@ static void minute_boundary_sync_task(void *pvParameters)
     // The timer will fire at second 1, 2, 3... of this minute
     StartSecondTimer();
     
-    ESP_LOGI("SNTP", "WWVB signal transmission started at minute boundary");
+    ESP_LOGI("SNTP", "WWVB signal transmission started at the minute boundary.");
     
     // Task has completed its work, delete itself
     vTaskDelete(NULL);
