@@ -153,7 +153,7 @@ uint16_t BitsEncoder(uint16_t n)
  * 3. Extract individual bits from BCD result
  * 4. Write bits to appropriate WWVB frame positions (LSB to MSB order)
  * 
- * Example: year=2024 → yearBCD=24 → bitsResult=0x0024 (binary: 0000 0000 0010 0100)
+ * Example: year=2024 → year_bcd=24 → bits_result=0x0024 (binary: 0000 0000 0010 0100)
  *   Position 45: bit 7 (MSB of upper nibble) = 0
  *   Position 46: bit 6                        = 0
  *   Position 47: bit 5                        = 1
@@ -209,7 +209,7 @@ void EncodeYear(uint16_t year, volatile uint8_t *signal)
  * - Positions 25-28: Tens digit (0-9) - 4 bits
  * - Positions 30-33: Ones digit (0-9) - 4 bits
  * 
- * Example: dayOfYear=365 → bitsResult=0x0365 (binary: 0011 0110 0101)
+ * Example: day_of_year=365 → bits_result=0x0365 (binary: 0011 0110 0101)
  *   Position 22: bit 9 (hundreds bit 1)       = 1  (represents 2^9 = 512... but max is 366)
  *   Position 23: bit 8 (hundreds bit 0)       = 1  (represents 2^8 = 256)
  *   Position 25: bit 7 (tens bit 3, MSB)      = 0
@@ -267,7 +267,7 @@ void EncodeDayOfYear(uint16_t day_of_year, volatile uint8_t *signal)
  * - Position 14: Reserved (always 0)
  * - Positions 15-18: Ones digit (0-9) - 4 bits
  * 
- * Example: hour=13 → bitsResult=0x0013 (binary: 0001 0011)
+ * Example: hour=13 → bits_result=0x0013 (binary: 0001 0011)
  *   Position 12: bit 5 (tens bit 1)         = 1  (represents 10)
  *   Position 13: bit 4 (tens bit 0)         = 0
  *   Position 15: bit 3 (ones bit 3, MSB)    = 0

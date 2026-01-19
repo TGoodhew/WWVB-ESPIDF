@@ -89,8 +89,8 @@ bool IsLeapYear(int year)
  * in Zeller's system, then convert the result to standard Sunday=0 format.
  * 
  * @param year Full 4-digit year (e.g., 2024)
- * @param startDay Output: day-of-year when DST begins (e.g., 70 for March 10)
- * @param endDay Output: day-of-year when DST ends (e.g., 308 for November 3)
+ * @param start_day Output: day-of-year when DST begins (e.g., 70 for March 10)
+ * @param end_day Output: day-of-year when DST ends (e.g., 308 for November 3)
  */
 void CalculateDSTDays(int year, int *start_day, int *end_day)
 {
@@ -184,7 +184,7 @@ void CalculateDSTDays(int year, int *start_day, int *end_day)
  * - isDaylightSavingTime(2024, 350) → false (December 15, after DST)
  * 
  * @param year Full 4-digit year (e.g., 2024)
- * @param daysPassed Day of year (1-366, where 1 = January 1)
+ * @param days_passed Day of year (1-366, where 1 = January 1)
  * @return true if DST is in effect on this day, false otherwise
  */
 bool IsDaylightSavingTime(int year, int days_passed)
