@@ -63,9 +63,6 @@ static wwvb_state_t wwvb_state = {
 // Flag for signaling WWVB array updates from ISR to task
 static volatile bool update_wwvb_array = false;
 
-// Spinlock for protecting pointer swap in ISR
-static portMUX_TYPE wwvb_spinlock = portMUX_INITIALIZER_UNLOCKED;
-
 // Function prototypes
 
 /**
@@ -117,7 +114,9 @@ bool InitializeWWVBBuffer(void);
  * 
  * 1. **Double-Buffer Management**: At the start of each minute (slot 0), atomically
  *    swaps the active and staging buffer pointers if new data is ready. This ensures
- *    the ISR always reads a complete, consistent 60-second frame.
+ *    the ISR always reads a complete, consistent 60-second frame. No spinlock is
+ *    needed because pointer assignments are atomic on 32-bit architecture and there's
+ *    no contention with the main task (which only writes to the staging buffer).
  * 
  * 2. **Bit Transmission**: Reads the current bit from the active buffer and modulates
  *    the carrier accordingly:
@@ -137,7 +136,7 @@ bool InitializeWWVBBuffer(void);
  * - **IRAM_ATTR**: Function stored in fast instruction RAM for consistent timing
  * - **Minimal execution time**: All operations are simple and deterministic
  * - **No blocking**: Never waits for anything, returns quickly
- * - **Atomic operations**: Uses spinlock for pointer swap to prevent race conditions
+ * - **Atomic operations**: Pointer swap is naturally atomic on 32-bit architecture
  * - **Deferred logging**: Debug output is queued to a task, not printed in ISR
  * 
  * Timing is critical: This ISR must complete in well under 1 millisecond to avoid
@@ -297,23 +296,22 @@ void IRAM_ATTR TimerSecond_ISR(void *param)
   ON = !ON;
   gpio_set_level((gpio_num_t)CONFIG_WWVB_DEBUG_LED_PIN, ON);
 
-  // === Double-Buffer Pointer Swap (Critical Section) ===
+  // === Double-Buffer Pointer Swap ===
   // At the start of each minute (slot 0), swap active and staging buffers if new data is ready.
   // This ensures we transmit a complete, consistent 60-second frame without glitches.
   // Pointer swap is used instead of memcpy because it's atomic and extremely fast (<1µs).
+  // Note: No spinlock needed here because:
+  // 1. This code only runs in ISR context (never in main task)
+  // 2. Main task only writes to staging buffer (never reads active/staging pointers)
+  // 3. Pointer assignments are atomic on 32-bit architecture
+  // 4. Using portENTER_CRITICAL_ISR can conflict with WiFi subsystem's own critical sections
   if (wwvb_state.slot == 0 && wwvb_state.swap_pending)
   {
-      // Enter critical section to make pointer swap atomic
-      // This prevents race conditions if main task reads pointers during swap
-      portENTER_CRITICAL_ISR(&wwvb_spinlock);
-      
       // Swap pointers: staging becomes active (transmitted), active becomes staging (writable)
       volatile uint8_t *temp = wwvb_state.active;
       wwvb_state.active = wwvb_state.staging;
       wwvb_state.staging = temp;
       wwvb_state.swap_pending = false;  // Clear flag
-      
-      portEXIT_CRITICAL_ISR(&wwvb_spinlock);
   }
 
   // === Slot Validation ===
