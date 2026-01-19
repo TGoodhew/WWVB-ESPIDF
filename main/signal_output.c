@@ -228,11 +228,10 @@ void Setup60KHzOutput(void)
 void SetupTimers(void)
 {
     // Create the 1 Hz second timer (periodic) - drives the entire signal generation
-    // Use ESP_TIMER_ISR dispatch method to run callback from ISR context (ESP-IDF v5.5.2)
-    // This provides precise timing and avoids task scheduling delays
+    // Using default dispatch method (timer task context)
+    // Task notifications to signal_modulation_task avoid nested timer operations
     const esp_timer_create_args_t timer_second_config = {
         .callback = &TimerSecond_ISR,
-        .dispatch_method = ESP_TIMER_ISR,
         .name = "One Second Timer"};
     ESP_ERROR_CHECK(esp_timer_create(&timer_second_config, &timers.second));
 
