@@ -301,7 +301,7 @@ void IRAM_ATTR TimerSecond_ISR(void *param)
   // This ensures we transmit a complete, consistent 60-second frame without glitches.
   // Pointer swap is used instead of memcpy because it's atomic and extremely fast (<1µs).
   // Note: No spinlock needed here because:
-  // 1. This code only runs in ISR context (never in main task)
+  // 1. This pointer swap code only runs in ISR context (never in main task)
   // 2. Main task only writes to staging buffer (never reads active/staging pointers)
   // 3. Pointer assignments are atomic on 32-bit architecture
   // 4. Using portENTER_CRITICAL_ISR can conflict with WiFi subsystem's own critical sections
