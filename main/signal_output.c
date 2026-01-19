@@ -97,7 +97,7 @@ void debug_task(void *pvParameters)
  * the timer system for re-enable operations and eliminating spinlock conflicts.
  * 
  * Architecture:
- * - Second timer (ESP_TIMER_ISR) notifies this task instead of starting nested timers
+ * - Second timer (default dispatch) notifies this task instead of starting nested timers
  * - Task uses vTaskDelay() for timing (separate from timer subsystem)
  * - Runs at high priority to ensure timely carrier re-enable
  * 
@@ -194,36 +194,35 @@ void Setup60KHzOutput(void)
  * @brief Create and configure timer and task for WWVB signal generation
  * 
  * This function creates the second timer and a dedicated signal modulation task.
- * In ESP-IDF v5.5.2, this architecture avoids spinlock issues by eliminating
- * nested timer operations.
+ * This architecture avoids spinlock issues by eliminating nested timer operations.
  * 
  * Architecture:
- * 1. Second Timer (1 Hz, periodic, ESP_TIMER_ISR dispatch):
- *    - Triggers every 1 second in ISR context
+ * 1. Second Timer (1 Hz, periodic, default dispatch):
+ *    - Triggers every 1 second in timer task context
  *    - Advances through the 60-second WWVB frame
  *    - Reads the current bit value (0, 1, or marker)
  *    - Reduces carrier power (sets duty cycle to 0%)
  *    - Notifies signal modulation task (instead of starting nested timers)
  * 
  * 2. Signal Modulation Task:
- *    - Waits for notification from second timer ISR
+ *    - Waits for notification from second timer callback
  *    - Uses FreeRTOS delay (vTaskDelay) for appropriate duration
  *    - Restores carrier to full power after delay
  *    - Runs independently of timer subsystem, avoiding spinlock conflicts with WiFi
  * 
  * Signal Coordination Example (for a '1' bit):
  * ```
- * t=0.0s:  Second Timer ISR fires
+ * t=0.0s:  Second Timer callback fires
  *          └─> Carrier power reduced (0% duty)
  *          └─> Task notified with BIT1 flag
  * t=0.5s:  Task delay expires
  *          └─> Carrier power restored (50% duty)
- * t=1.0s:  Second Timer ISR fires (next bit)
+ * t=1.0s:  Second Timer callback fires (next bit)
  *          └─> Repeat for next bit...
  * ```
  * 
  * This approach eliminates spinlock issues by avoiding esp_timer_start_once()
- * calls from within ISR context, which can conflict with WiFi's timer usage.
+ * calls from within timer callback context, which can conflict with WiFi's timer usage.
  */
 void SetupTimers(void)
 {
