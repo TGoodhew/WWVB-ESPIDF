@@ -54,16 +54,16 @@ uint16_t BitsEncoder(uint16_t n);
  * @param year The year to encode (WWVB_MIN_YEAR to WWVB_MAX_YEAR)
  * @param signal The WWVB_SIGNAL_ARRAY_SIZE-element signal array
  */
-void encodeYear(uint16_t year, volatile uint8_t *signal);
+void EncodeYear(uint16_t year, volatile uint8_t *signal);
 
 /*
  * Encode day of year into WWVB signal array (10 bit BCD)
  * Encodes the day of year (Julian day) into WWVB signal positions.
  * 
- * @param dayOfYear The day of year (WWVB_MIN_DAY_OF_YEAR to WWVB_MAX_DAY_OF_YEAR)
+ * @param day_of_year The day of year (WWVB_MIN_DAY_OF_YEAR to WWVB_MAX_DAY_OF_YEAR)
  * @param signal The WWVB_SIGNAL_ARRAY_SIZE-element signal array
  */
-void encodeDayOfYear(uint16_t dayOfYear, volatile uint8_t *signal);
+void EncodeDayOfYear(uint16_t day_of_year, volatile uint8_t *signal);
 
 /*
  * Encode hour into WWVB signal array (6 bit BCD)
@@ -72,7 +72,7 @@ void encodeDayOfYear(uint16_t dayOfYear, volatile uint8_t *signal);
  * @param hour The hour (0 to WWVB_MAX_HOUR)
  * @param signal The WWVB_SIGNAL_ARRAY_SIZE-element signal array
  */
-void encodeHour(uint8_t hour, volatile uint8_t *signal);
+void EncodeHour(uint8_t hour, volatile uint8_t *signal);
 
 /*
  * Encode minute into WWVB signal array (7 bit BCD)
@@ -81,7 +81,7 @@ void encodeHour(uint8_t hour, volatile uint8_t *signal);
  * @param minute The minute (0 to WWVB_MAX_MINUTE)
  * @param signal The WWVB_SIGNAL_ARRAY_SIZE-element signal array
  */
-void encodeMinute(uint8_t minute, volatile uint8_t *signal);
+void EncodeMinute(uint8_t minute, volatile uint8_t *signal);
 
 /*
  * Set WWVB markers and always-zero indicators
@@ -90,7 +90,7 @@ void encodeMinute(uint8_t minute, volatile uint8_t *signal);
  * 
  * @param signal The WWVB_SIGNAL_ARRAY_SIZE-element signal array
  */
-void setMarkersAndIndicators(volatile uint8_t *signal);
+void SetMarkersAndIndicators(volatile uint8_t *signal);
 
 /*
  * Set DUT1 bits (obsolete, set to 0)
@@ -99,7 +99,7 @@ void setMarkersAndIndicators(volatile uint8_t *signal);
  * 
  * @param signal The WWVB_SIGNAL_ARRAY_SIZE-element signal array
  */
-void setDUT1(volatile uint8_t *signal);
+void SetDUT1(volatile uint8_t *signal);
 
 /*
  * Set leap year indicator
@@ -109,26 +109,26 @@ void setDUT1(volatile uint8_t *signal);
  * @param year The year to check (WWVB_MIN_YEAR to WWVB_MAX_YEAR)
  * @param signal The WWVB_SIGNAL_ARRAY_SIZE-element signal array
  */
-void setLeapYear(uint16_t year, volatile uint8_t *signal);
+void SetLeapYear(uint16_t year, volatile uint8_t *signal);
 
 /*
  * Set leap second indicator
  * Sets the leap second warning bit. A leap second is occasionally added
  * to UTC to account for Earth's irregular rotation.
  * 
- * @param IsLeap True if leap second will occur at end of current month
+ * @param is_leap True if leap second will occur at end of current month
  * @param signal The WWVB_SIGNAL_ARRAY_SIZE-element signal array
  */
-void setLeapSecond(bool IsLeap, volatile uint8_t *signal);
+void SetLeapSecond(bool is_leap, volatile uint8_t *signal);
 
 /*
  * Set DST (Daylight Saving Time) indicator bits
  * Sets both DST bits (positions 57 and 58) to indicate whether DST is currently in effect.
  * Both bits are set to 1 when DST is active, 0 when standard time is in effect.
  * 
- * @param IsDST True if DST is currently in effect
+ * @param is_dst True if DST is currently in effect
  * @param signal The WWVB_SIGNAL_ARRAY_SIZE-element signal array
  */
-void setDST(bool IsDST, volatile uint8_t *signal);
+void SetDST(bool is_dst, volatile uint8_t *signal);
 
 #endif // WWVB_ENCODER_H

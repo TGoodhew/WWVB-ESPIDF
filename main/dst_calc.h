@@ -42,24 +42,24 @@
  * @param year The year to check
  * @return true if the year is a leap year, false otherwise
  */
-bool isLeapYear(int year);
+bool IsLeapYear(int year);
 
 /*
  * Calculate the start and end days (as day-of-year) for DST in a given year
  * 
  * @param year The year to calculate DST days for (e.g., 2024)
- * @param startDay Pointer to store the day-of-year when DST starts (1-366)
- * @param endDay Pointer to store the day-of-year when DST ends (1-366)
+ * @param start_day Pointer to store the day-of-year when DST starts (1-366)
+ * @param end_day Pointer to store the day-of-year when DST ends (1-366)
  */
-void calculateDSTDays(int year, int *startDay, int *endDay);
+void CalculateDSTDays(int year, int *start_day, int *end_day);
 
 /*
  * Check if a given day is within the DST period for a given year
  * 
  * @param year The year (e.g., 2024)
- * @param daysPassed Day of year (1-366, where 1 = January 1)
+ * @param days_passed Day of year (1-366, where 1 = January 1)
  * @return true if the day is during DST (on or after DST start, before DST end), false otherwise
  */
-bool isDaylightSavingTime(int year, int daysPassed);
+bool IsDaylightSavingTime(int year, int days_passed);
 
 #endif // DST_CALC_H
