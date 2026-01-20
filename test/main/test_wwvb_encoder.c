@@ -6,7 +6,7 @@
 
 #include <string.h>
 #include "unity.h"
-#include "../main/wwvb_encoder.h"
+#include "wwvb_encoder.h"
 
 static uint8_t test_signal[WWVB_SIGNAL_ARRAY_SIZE];
 

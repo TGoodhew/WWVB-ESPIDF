@@ -5,7 +5,7 @@
  */
 
 #include "unity.h"
-#include "../main/dst_calc.h"
+#include "dst_calc.h"
 
 static void test_IsLeapYear_regular_leap_year(void)
 {
