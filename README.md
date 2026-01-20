@@ -567,6 +567,50 @@ idf.py -p /dev/ttyUSB0 flash monitor
 - **Driver required** - Some boards need CP2102 or CH340 USB-to-serial drivers
 - **Permissions (Linux)** - Add user to dialout group: `sudo usermod -a -G dialout $USER`
 
+## Unit Tests
+
+The project includes comprehensive unit tests for the WWVB encoder and DST calculation modules using the ESP-IDF Unity test framework.
+
+### Running Tests
+
+```bash
+# Build the tests
+cd test
+idf.py build
+
+# Flash and run tests on ESP32
+idf.py -p /dev/ttyUSB0 flash monitor
+```
+
+### Test Coverage
+
+The test suite includes:
+
+**WWVB Encoder Tests:**
+- BCD (Binary-Coded Decimal) encoding
+- Year, day, hour, and minute encoding
+- Marker and indicator bit positioning
+- Leap year detection
+- DST indicator bits
+
+**DST Calculation Tests:**
+- Leap year calculation (Gregorian calendar rules)
+- DST boundary calculations (2nd Sunday in March, 1st Sunday in November)
+- DST period detection for specific dates
+
+See [`test/README.md`](test/README.md) for detailed testing documentation and guidelines for adding new tests.
+
+### Test Results
+
+All tests must pass before code changes are merged. Example output:
+```
+Starting WWVB Unit Tests
+====================================
+28 Tests 0 Failures 0 Ignored 
+OK
+====================================
+```
+
 ## Technical References
 
 - [WWVB Time Code Format (NIST)](https://www.nist.gov/pml/time-and-frequency-division/time-distribution/radio-station-wwvb/wwvb-time-code-format)
