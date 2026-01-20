@@ -10,7 +10,7 @@
 
 static uint8_t test_signal[WWVB_SIGNAL_ARRAY_SIZE];
 
-static void setUp(void)
+static void reset_test_signal(void)
 {
     memset(test_signal, 0xFF, WWVB_SIGNAL_ARRAY_SIZE);
 }
@@ -41,7 +41,7 @@ static void test_BitsEncoder_three_digits(void)
 
 static void test_EncodeYear_2024(void)
 {
-    setUp();
+    reset_test_signal();
     EncodeYear(2024, test_signal);
     
     TEST_ASSERT_EQUAL_UINT8(0, test_signal[45]);
@@ -56,7 +56,7 @@ static void test_EncodeYear_2024(void)
 
 static void test_EncodeYear_2000(void)
 {
-    setUp();
+    reset_test_signal();
     EncodeYear(2000, test_signal);
     
     TEST_ASSERT_EQUAL_UINT8(0, test_signal[45]);
@@ -71,7 +71,7 @@ static void test_EncodeYear_2000(void)
 
 static void test_EncodeDayOfYear_001(void)
 {
-    setUp();
+    reset_test_signal();
     EncodeDayOfYear(1, test_signal);
     
     TEST_ASSERT_EQUAL_UINT8(0, test_signal[22]);
@@ -88,7 +88,7 @@ static void test_EncodeDayOfYear_001(void)
 
 static void test_EncodeDayOfYear_365(void)
 {
-    setUp();
+    reset_test_signal();
     EncodeDayOfYear(365, test_signal);
     
     TEST_ASSERT_EQUAL_UINT8(1, test_signal[22]);
@@ -105,7 +105,7 @@ static void test_EncodeDayOfYear_365(void)
 
 static void test_EncodeHour_00(void)
 {
-    setUp();
+    reset_test_signal();
     EncodeHour(0, test_signal);
     
     TEST_ASSERT_EQUAL_UINT8(0, test_signal[12]);
@@ -118,7 +118,7 @@ static void test_EncodeHour_00(void)
 
 static void test_EncodeHour_13(void)
 {
-    setUp();
+    reset_test_signal();
     EncodeHour(13, test_signal);
     
     TEST_ASSERT_EQUAL_UINT8(0, test_signal[12]);
@@ -131,7 +131,7 @@ static void test_EncodeHour_13(void)
 
 static void test_EncodeMinute_00(void)
 {
-    setUp();
+    reset_test_signal();
     EncodeMinute(0, test_signal);
     
     TEST_ASSERT_EQUAL_UINT8(0, test_signal[1]);
@@ -145,7 +145,7 @@ static void test_EncodeMinute_00(void)
 
 static void test_EncodeMinute_42(void)
 {
-    setUp();
+    reset_test_signal();
     EncodeMinute(42, test_signal);
     
     TEST_ASSERT_EQUAL_UINT8(0, test_signal[1]);
@@ -159,7 +159,7 @@ static void test_EncodeMinute_42(void)
 
 static void test_SetMarkersAndIndicators(void)
 {
-    setUp();
+    reset_test_signal();
     SetMarkersAndIndicators(test_signal);
     
     // Check markers
@@ -182,21 +182,21 @@ static void test_SetMarkersAndIndicators(void)
 
 static void test_SetLeapYear_2024(void)
 {
-    setUp();
+    reset_test_signal();
     SetLeapYear(2024, test_signal);
     TEST_ASSERT_EQUAL_UINT8(WWVB_BIT_ONE, test_signal[55]);
 }
 
 static void test_SetLeapYear_2023(void)
 {
-    setUp();
+    reset_test_signal();
     SetLeapYear(2023, test_signal);
     TEST_ASSERT_EQUAL_UINT8(WWVB_BIT_ZERO, test_signal[55]);
 }
 
 static void test_SetDST_false(void)
 {
-    setUp();
+    reset_test_signal();
     SetDST(false, test_signal);
     TEST_ASSERT_EQUAL_UINT8(WWVB_BIT_ZERO, test_signal[57]);
     TEST_ASSERT_EQUAL_UINT8(WWVB_BIT_ZERO, test_signal[58]);
@@ -204,7 +204,7 @@ static void test_SetDST_false(void)
 
 static void test_SetDST_true(void)
 {
-    setUp();
+    reset_test_signal();
     SetDST(true, test_signal);
     TEST_ASSERT_EQUAL_UINT8(WWVB_BIT_ONE, test_signal[57]);
     TEST_ASSERT_EQUAL_UINT8(WWVB_BIT_ONE, test_signal[58]);

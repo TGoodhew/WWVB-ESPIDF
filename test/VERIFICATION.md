@@ -160,7 +160,7 @@ WWVB Unit Tests Complete
 **Solution:**
 1. Check USB connection
 2. Verify serial port: `ls /dev/tty*` (Linux/macOS) or Device Manager (Windows)
-3. Check permissions: `sudo chmod 666 /dev/ttyUSB0`
+3. On Linux, ensure your user has access to the serial device (e.g., add the user to the `dialout` group and re-login: `sudo usermod -a -G dialout $USER`)
 4. Try different USB cable
 
 ### Tests Run But Fail

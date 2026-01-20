@@ -5,8 +5,7 @@
 
 cmake_minimum_required(VERSION 3.5)
 
-# Add the main project source directory as a component
-set(EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/../main")
+# Test project uses its own components; production sources added explicitly in test/main/CMakeLists.txt
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 

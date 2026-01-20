@@ -20,6 +20,17 @@ static const char *TAG = "WWVB_TEST";
 extern void run_wwvb_encoder_tests(void);
 extern void run_dst_calc_tests(void);
 
+// Unity test fixture hooks (required by Unity framework)
+void setUp(void)
+{
+    // Called before each test
+}
+
+void tearDown(void)
+{
+    // Called after each test
+}
+
 void app_main(void)
 {
     ESP_LOGI(TAG, "Starting WWVB Unit Tests");
