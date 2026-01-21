@@ -74,6 +74,53 @@ Replace `/dev/ttyUSB0` with your serial port.
 
 The command `idf.py test` does not exist - use `idf.py build` instead.
 
+### Common Issues and Solutions
+
+#### Serial Port Busy or Locked
+
+**Symptom:** Error message "Could not open /dev/ttyUSB0, the port is busy" or "Resource temporarily unavailable"
+
+**Cause:** The serial port is already open by another process, commonly:
+- VSCode Serial Monitor is open
+- Another `idf.py monitor` session is running
+- Terminal program (screen, minicom, picocom) is using the port
+
+**Solutions:**
+1. **Close all serial monitors first:**
+   - In VSCode: Close the Serial Monitor panel completely
+   - Kill any running monitor processes: `pkill -f "idf.py monitor"`
+   - Check for other programs: `lsof /dev/ttyUSB0` (Linux/macOS)
+
+2. **Use build-only mode first:**
+   ```bash
+   ./run_tests.sh build    # Build without flashing
+   ```
+   Then flash separately after ensuring port is free:
+   ```bash
+   ./run_tests.sh flash /dev/ttyUSB0
+   ```
+
+3. **Try a different port:**
+   ```bash
+   # List available ports
+   ls /dev/tty* | grep -E 'USB|ACM'
+   
+   # Use different port
+   ./run_tests.sh all /dev/ttyUSB1
+   ```
+
+#### Port Doesn't Exist
+
+**Symptom:** Error "Serial port /dev/ttyUSB0 doesn't exist"
+
+**Solutions:**
+1. Check ESP32 is connected via USB
+2. List available serial ports:
+   - Linux: `ls /dev/tty* | grep -E 'USB|ACM'`
+   - macOS: `ls /dev/cu.*`
+   - Windows: Check Device Manager
+3. Use correct port: `./run_tests.sh all /dev/ttyACM0`
+
 ### Expected Output
 When tests run successfully, you should see output like:
 ```

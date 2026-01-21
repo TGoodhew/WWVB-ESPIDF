@@ -226,12 +226,27 @@ WWVB Unit Tests Complete
 
 ### Flash Fails
 
-**Symptom:** Cannot connect to ESP32
+**Symptom:** Cannot connect to ESP32 or "port is busy"
+
 **Solution:**
-1. Check USB connection
-2. Verify serial port: `ls /dev/tty*` (Linux/macOS) or Device Manager (Windows)
-3. On Linux, ensure your user has access to the serial device (e.g., add the user to the `dialout` group and re-login: `sudo usermod -a -G dialout $USER`)
-4. Try different USB cable
+1. **If port is busy/locked:**
+   - Close VSCode Serial Monitor or any other serial terminal
+   - Kill monitor processes: `pkill -f "idf.py monitor"`
+   - Check what's using the port: `lsof /dev/ttyUSB0` (Linux/macOS)
+   - Build without flashing first: `./run_tests.sh build`
+   - Then flash separately after closing monitors: `./run_tests.sh flash /dev/ttyUSB0`
+
+2. **If port doesn't exist:**
+   - Check USB connection
+   - Verify serial port exists: `ls /dev/tty* | grep -E 'USB|ACM'` (Linux/macOS) or Device Manager (Windows)
+   - Try different port: `./run_tests.sh all /dev/ttyACM0`
+   - Check permissions: On Linux, user should be in `dialout` group
+   - Try different USB cable or USB port
+
+3. **General troubleshooting:**
+   - Ensure ESP32 is powered
+   - Try pressing RESET button on ESP32
+   - Check USB drivers are installed for your board
 
 ### Tests Run But Fail
 

@@ -603,6 +603,18 @@ idf.py -p /dev/ttyUSB0 flash monitor
 
 **Note:** The `idf.py test` command is not used for this project. Tests are a separate ESP-IDF project in the `test/` directory.
 
+### Common Issues
+
+**Serial Port Busy/Locked Error:**
+
+If you get "Could not open /dev/ttyUSB0, the port is busy":
+1. **Close all serial monitors** - especially VSCode Serial Monitor
+2. **Build first without flashing**: `./run_tests.sh build`
+3. **Then flash separately**: `./run_tests.sh flash /dev/ttyUSB0`
+4. **Or use a different port**: `./run_tests.sh all /dev/ttyACM0`
+
+The script now provides helpful diagnostics and suggestions when port issues occur.
+
 ### Test Coverage
 
 The test suite includes:
