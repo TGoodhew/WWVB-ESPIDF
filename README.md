@@ -573,14 +573,35 @@ The project includes comprehensive unit tests for the WWVB encoder and DST calcu
 
 ### Running Tests
 
+**Option 1: Using the helper script (from root directory):**
 ```bash
-# Build the tests
+# Build, flash, and run tests
+./run_tests.sh
+
+# Or specify individual commands
+./run_tests.sh build          # Build only
+./run_tests.sh flash          # Flash only
+./run_tests.sh monitor        # Monitor only
+./run_tests.sh all            # Build, flash, and monitor (default)
+./run_tests.sh clean          # Clean build artifacts
+
+# Specify a different serial port
+./run_tests.sh all /dev/ttyUSB1
+```
+
+**Option 2: Using idf.py directly (from test directory):**
+```bash
+# Navigate to test directory first
 cd test
+
+# Build the tests
 idf.py build
 
 # Flash and run tests on ESP32
 idf.py -p /dev/ttyUSB0 flash monitor
 ```
+
+**Note:** The `idf.py test` command is not used for this project. Tests are a separate ESP-IDF project in the `test/` directory.
 
 ### Test Coverage
 

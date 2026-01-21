@@ -27,19 +27,52 @@ Tests for US Daylight Saving Time calculation functions:
 - ESP-IDF v4.1.0 or higher installed and configured
 - ESP32 development board (or QEMU for host-side testing)
 
-### Build Tests
+### Quick Start - Using Helper Script (Recommended)
+
+From the **root directory** of the project:
+
 ```bash
+# Build, flash, and run tests (all in one)
+./run_tests.sh
+
+# Or use specific commands
+./run_tests.sh build          # Build only
+./run_tests.sh flash          # Flash only  
+./run_tests.sh monitor        # Monitor only
+./run_tests.sh clean          # Clean build artifacts
+
+# Specify a different serial port
+./run_tests.sh all /dev/ttyUSB1
+```
+
+### Manual Build - Using idf.py Directly
+
+From the **test directory**:
+
+```bash
+# Navigate to test directory (important!)
 cd test
+
+# Build the tests
 idf.py build
 ```
 
 ### Flash and Run Tests on ESP32
+
+From the **test directory**:
+
 ```bash
 cd test
 idf.py -p /dev/ttyUSB0 flash monitor
 ```
 
 Replace `/dev/ttyUSB0` with your serial port.
+
+**Important Note:** The test project is a standalone ESP-IDF project in the `test/` directory. You must either:
+1. Use the `run_tests.sh` helper script from the root directory, OR
+2. Navigate to the `test/` directory before running `idf.py` commands
+
+The command `idf.py test` does not exist - use `idf.py build` instead.
 
 ### Expected Output
 When tests run successfully, you should see output like:

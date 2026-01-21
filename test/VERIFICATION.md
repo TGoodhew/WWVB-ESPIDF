@@ -10,15 +10,64 @@ Before running tests, ensure:
 - ESP32 development board is connected
 - Serial port permissions are configured (Linux: add user to `dialout` group)
 
-## Build Verification
+## Quick Start
 
-### Step 1: Navigate to Test Directory
+### Option 1: Using Helper Script (Easiest)
+
+From the **root directory** of the project:
+
 ```bash
-cd test
+# Build, flash, and run all tests
+./run_tests.sh
+
+# Or specify a different serial port
+./run_tests.sh all /dev/ttyUSB1
 ```
 
-### Step 2: Build the Tests
+### Option 2: Manual Build
+
+From the **root directory**:
+
 ```bash
+# Navigate to test directory
+cd test
+
+# Build and run tests
+idf.py build
+idf.py -p /dev/ttyUSB0 flash monitor
+```
+
+**Important:** The command `idf.py test` does not exist. The test project is a standalone ESP-IDF project in the `test/` subdirectory.
+
+**Expected Output:**
+- Build should complete without errors
+- You should see compilation of:
+  - `main.c`
+  - `test_wwvb_encoder.c`
+  - `test_dst_calc.c`
+  - `wwvb_encoder.c`
+  - `dst_calc.c`
+
+## Build Verification
+
+### Using Helper Script
+
+From the **root directory**:
+
+```bash
+./run_tests.sh build
+```
+
+**Expected Output:**
+- Build should complete without errors
+- You should see compilation of test files
+
+### Using idf.py Directly
+
+From the **test directory**:
+
+```bash
+cd test
 idf.py build
 ```
 
@@ -35,11 +84,32 @@ idf.py build
 - **"idf.py: command not found"** - ESP-IDF environment not activated
 - **"IDF_PATH not set"** - Run `. $IDF_PATH/export.sh` or `get_idf`
 - **CMake errors** - Ensure ESP-IDF version is 4.1.0 or higher
+- **"ninja: error: unknown target 'test'"** - You're trying to run `idf.py test` which doesn't exist. Use `idf.py build` from the `test/` directory or use `./run_tests.sh` from the root directory.
 
 ## Running Tests on ESP32
 
-### Step 3: Flash and Monitor
+### Using Helper Script
+
+From the **root directory**:
+
 ```bash
+# Build, flash, and monitor
+./run_tests.sh
+
+# Or specify port
+./run_tests.sh all /dev/ttyUSB0
+```
+
+### Using idf.py Directly
+
+From the **test directory**:
+
+### Using idf.py Directly
+
+From the **test directory**:
+
+```bash
+cd test
 idf.py -p /dev/ttyUSB0 flash monitor
 ```
 
