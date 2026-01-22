@@ -45,7 +45,7 @@ The codebase is organized into modular components:
 ```
 main/
 ├── main.c              - Main application logic, ISR coordination, double-buffering
-├── wwvb_encoder.c/h    - WWVB signal encoding (BCD, time data)
+├── wwvb_encoder.c/h    - WWVB signal encoding (weighted binary for min/hour, BCD for year/day)
 ├── signal_output.c/h   - 60 kHz PWM generation, timer management
 ├── wifi_manager.c/h    - WiFi provisioning and connection management
 ├── time_sync.c/h       - SNTP time synchronization
@@ -56,7 +56,7 @@ main/
 ### Module Responsibilities
 
 - **main.c**: Application entry point, coordinates all modules, manages double-buffered WWVB signal arrays, and handles the per-second ISR that drives signal transmission
-- **wwvb_encoder**: Converts time data (year, day, hour, minute) into WWVB frame format using BCD encoding
+- **wwvb_encoder**: Converts time data (year, day, hour, minute) into WWVB frame format using weighted binary encoding for minutes/hours and BCD for year/day
 - **signal_output**: Generates the 60 kHz carrier using ESP32 LEDC PWM and manages signal modulation timers
 - **wifi_manager**: Handles WiFi provisioning via BLE with cryptographically secure PoP generation
 - **time_sync**: Manages SNTP synchronization with configurable NTP server and retry logic
@@ -102,10 +102,10 @@ The WWVB signal encodes time information in a 60-second frame using Binary-Coded
 Position  Type        Data                Weight    Description
 --------  ----------  ------------------  --------  ------------------------------------
 0         Marker      Frame Reference     -         Start of minute marker
-1-8       Data        Minutes             40-1      Current minute (00-59) in BCD
+1-8       Data        Minutes             40-1      Current minute (00-59) in weighted binary
 9         Marker      Position Reference  -         Every 10 seconds
 10-11     Reserved    Always 0            -         Reserved bits
-12-18     Data        Hours               20-1      Current hour (00-23) in BCD
+12-18     Data        Hours               20-1      Current hour (00-23) in weighted binary
 19        Marker      Position Reference  -         Every 10 seconds
 20-21     Reserved    Always 0            -         Reserved bits
 22-33     Data        Day of Year         200-1     Julian day (001-366) in BCD
@@ -129,6 +129,16 @@ BCD represents each decimal digit as a 4-bit binary number. For example:
 - Year 2024 → 24 → bits represent: 0010 0100
 - Hour 13 → bits represent: 0001 0011
 
+**Weighted Binary Encoding:**
+
+Some WWVB fields (minutes and hours) use weighted binary encoding where each bit position has a specific weight that sums to the value:
+- Minutes use weights: 40, 20, 10, 8, 4, 2, 1
+- Hours use weights: 20, 10, 8, 4, 2, 1
+
+For example, minute 42 = 40 + 2, so only the bits for weights 40 and 2 are set to 1.
+
+**Important Note:** Year and Day of Year use BCD encoding, while Minutes and Hours use weighted binary encoding. This is an important distinction in the WWVB protocol!
+
 The BitsEncoder function converts decimal values to BCD by:
 1. Extracting hundreds digit: `n / 100`
 2. Extracting tens digit: `(n / 10) % 10`
@@ -137,22 +147,24 @@ The BitsEncoder function converts decimal values to BCD by:
 
 ### Example: Encoding Minute = 42
 
+**Important:** Minutes and hours use **weighted binary encoding**, not BCD!
+
 ```
 Decimal: 42
-BCD breakdown:
-  - Tens digit: 4 → 0100 binary
-  - Ones digit: 2 → 0010 binary
-  - Combined: 0100 0010 (0x42 in BCD)
+Weighted binary breakdown (weights: 40, 20, 10, 8, 4, 2, 1):
+  42 = 40 + 2
+  
+WWVB Frame Positions:
+  Position 1 (weight 40): 1 (42 >= 40)
+  Position 2 (weight 20): 0 (remainder 2 < 20)
+  Position 3 (weight 10): 0 (remainder 2 < 10)
+  Position 4: Reserved (always 0)
+  Position 5 (weight 8):  0 (remainder 2 < 8)
+  Position 6 (weight 4):  0 (remainder 2 < 4)
+  Position 7 (weight 2):  1 (remainder 2 >= 2)
+  Position 8 (weight 1):  0 (remainder 0 < 1)
 
-WWVB Frame Positions (LSB to MSB):
-  Position 1: bit 0 of ones (2) → 0
-  Position 2: bit 1 of ones     → 1
-  Position 3: bit 2 of ones     → 0
-  Position 4: bit 3 of ones     → 0
-  Position 5: bit 0 of tens (4) → 0
-  Position 6: bit 1 of tens     → 0
-  Position 7: bit 2 of tens     → 1
-  Position 8: bit 3 of tens     → 0
+Result: [1,0,0,_,0,0,1,0] where _ is the reserved bit
 ```
 
 ## System Architecture

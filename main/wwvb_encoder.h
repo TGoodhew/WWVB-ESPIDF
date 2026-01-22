@@ -2,8 +2,8 @@
  * WWVB Signal Encoding Module
  * 
  * Functions for encoding time data into WWVB signal format.
- * WWVB uses Binary-Coded Decimal (BCD) format with specific bit positions
- * for year, day of year, hour, minute, and various indicators.
+ * - Minutes and Hours use weighted binary encoding (e.g., 40+20+10+8+4+2+1 for minutes)
+ * - Year and Day of Year use Binary-Coded Decimal (BCD) format
  * 
  * Reference: https://en.wikipedia.org/wiki/WWVB#Amplitude-modulated_time_code
  */
