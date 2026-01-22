@@ -567,6 +567,83 @@ idf.py -p /dev/ttyUSB0 flash monitor
 - **Driver required** - Some boards need CP2102 or CH340 USB-to-serial drivers
 - **Permissions (Linux)** - Add user to dialout group: `sudo usermod -a -G dialout $USER`
 
+## Unit Tests
+
+The project includes comprehensive unit tests for the WWVB encoder and DST calculation modules using the ESP-IDF Unity test framework.
+
+### Running Tests
+
+**Option 1: Using the helper script (from root directory):**
+```bash
+# Build, flash, and run tests
+./run_tests.sh
+
+# Or specify individual commands
+./run_tests.sh build          # Build only
+./run_tests.sh flash          # Flash only
+./run_tests.sh monitor        # Monitor only
+./run_tests.sh all            # Build, flash, and monitor (default)
+./run_tests.sh clean          # Clean build artifacts
+
+# Specify a different serial port
+./run_tests.sh all /dev/ttyUSB1
+```
+
+**Option 2: Using idf.py directly (from test directory):**
+```bash
+# Navigate to test directory first
+cd test
+
+# Build the tests
+idf.py build
+
+# Flash and run tests on ESP32
+idf.py -p /dev/ttyUSB0 flash monitor
+```
+
+**Note:** The `idf.py test` command is not used for this project. Tests are a separate ESP-IDF project in the `test/` directory.
+
+### Common Issues
+
+**Serial Port Busy/Locked Error:**
+
+If you get "Could not open /dev/ttyUSB0, the port is busy":
+1. **Close all serial monitors** - especially VSCode Serial Monitor
+2. **Build first without flashing**: `./run_tests.sh build`
+3. **Then flash separately**: `./run_tests.sh flash /dev/ttyUSB0`
+4. **Or use a different port**: `./run_tests.sh all /dev/ttyACM0`
+
+The script now provides helpful diagnostics and suggestions when port issues occur.
+
+### Test Coverage
+
+The test suite includes:
+
+**WWVB Encoder Tests:**
+- BCD (Binary-Coded Decimal) encoding
+- Year, day, hour, and minute encoding
+- Marker and indicator bit positioning
+- Leap year detection
+- DST indicator bits
+
+**DST Calculation Tests:**
+- Leap year calculation (Gregorian calendar rules)
+- DST boundary calculations (2nd Sunday in March, 1st Sunday in November)
+- DST period detection for specific dates
+
+See [`test/README.md`](test/README.md) for detailed testing documentation and guidelines for adding new tests.
+
+### Test Results
+
+All tests must pass before code changes are merged. Example output:
+```
+Starting WWVB Unit Tests
+====================================
+28 Tests 0 Failures 0 Ignored 
+OK
+====================================
+```
+
 ## Technical References
 
 - [WWVB Time Code Format (NIST)](https://www.nist.gov/pml/time-and-frequency-division/time-distribution/radio-station-wwvb/wwvb-time-code-format)

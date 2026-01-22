@@ -13,6 +13,8 @@
  * - For other time zones or DST rules, use ESP-IDF's timezone support
  * - The WWVB signal encodes UTC time, but DST indicators tell receivers whether
  *   the local US time zone is observing DST
+ * 
+ * Unit tests: See test/main/test_dst_calc.c
  */
 
 #include "dst_calc.h"

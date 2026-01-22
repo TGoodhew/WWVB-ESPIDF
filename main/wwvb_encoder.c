@@ -1,5 +1,7 @@
 /*
  * WWVB Signal Encoding Module
+ * 
+ * Unit tests: See test/main/test_wwvb_encoder.c
  */
 
 #include "wwvb_encoder.h"
