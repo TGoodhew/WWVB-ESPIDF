@@ -96,7 +96,7 @@ Each second of the 60-second frame transmits one bit. The atomic clock receiver:
 
 ### WWVB Frame Structure (60 bits, 0-59)
 
-The WWVB signal encodes time information in a 60-second frame using Binary-Coded Decimal (BCD):
+The WWVB signal encodes time information in a 60-second frame using weighted binary encoding:
 
 ```
 Position  Type        Data                Weight              Description
@@ -633,7 +633,7 @@ The script now provides helpful diagnostics and suggestions when port issues occ
 The test suite includes:
 
 **WWVB Encoder Tests:**
-- BCD (Binary-Coded Decimal) encoding
+- Weighted binary encoding
 - Year, day, hour, and minute encoding
 - Marker and indicator bit positioning
 - Leap year detection

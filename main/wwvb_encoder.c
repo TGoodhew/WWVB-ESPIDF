@@ -8,10 +8,10 @@
 #include <time.h>
 #include <esp_log.h>
 
-// BCD encoding constants
-#define BCD_DIVISOR_100 100
-#define BCD_DIVISOR_10 10
-#define BCD_MASK_NIBBLE 0xF
+// Digit extraction constants
+#define DIGIT_DIVISOR_100 100
+#define DIGIT_DIVISOR_10 10
+#define NIBBLE_MASK 0xF
 
 // WWVB bit position constants for year encoding
 #define WWVB_YEAR_BIT_45 45
@@ -127,15 +127,15 @@ uint16_t BitsEncoder(uint16_t n)
     uint16_t result = 0;
 
     // Extract individual decimal digits
-    const uint8_t div1 = n / BCD_DIVISOR_100;                              // Hundreds digit (0-9)
-    const uint8_t div2 = (n / BCD_DIVISOR_10) % BCD_DIVISOR_10;           // Tens digit (0-9)
-    const uint8_t mod = n % BCD_DIVISOR_10;                               // Ones digit (0-9)
+    const uint8_t div1 = n / DIGIT_DIVISOR_100;                              // Hundreds digit (0-9)
+    const uint8_t div2 = (n / DIGIT_DIVISOR_10) % DIGIT_DIVISOR_10;           // Tens digit (0-9)
+    const uint8_t mod = n % DIGIT_DIVISOR_10;                               // Ones digit (0-9)
 
-    // Pack digits into BCD format: [bits 11-8: hundreds][bits 7-4: tens][bits 3-0: ones]
+    // Pack digits into nibbles: [bits 11-8: hundreds][bits 7-4: tens][bits 3-0: ones]
     // Mask with 0xF ensures only lower 4 bits of each digit are used
-    result = (div1 & BCD_MASK_NIBBLE) << 8;     // Hundreds in bits 11-8
-    result |= (div2 & BCD_MASK_NIBBLE) << 4;    // Tens in bits 7-4
-    result |= (mod & BCD_MASK_NIBBLE);          // Ones in bits 3-0
+    result = (div1 & NIBBLE_MASK) << 8;     // Hundreds in bits 11-8
+    result |= (div2 & NIBBLE_MASK) << 4;    // Tens in bits 7-4
+    result |= (mod & NIBBLE_MASK);          // Ones in bits 3-0
 
     return result;
 }
@@ -143,28 +143,28 @@ uint16_t BitsEncoder(uint16_t n)
 /**
  * @brief Encode year value into WWVB signal format
  * 
- * WWVB encodes the 2-digit year (00-99) in 8 bit positions using BCD format.
+ * WWVB encodes the 2-digit year (00-99) in 8 bit positions using weighted binary.
  * The year is split across two groups with position 49 (a marker) in between:
- * - Positions 45-48: Lower nibble (ones digit) of year in BCD
+ * - Positions 45-48: Four bits from ones digit (weights 80,40,20,10)
  * - Position 49: Marker bit (not used for year)
- * - Positions 50-53: Upper nibble (tens digit) of year in BCD
+ * - Positions 50-53: Four bits from tens digit (weights 8,4,2,1)
  * 
  * Algorithm:
  * 1. Convert 4-digit year (e.g., 2024) to 2-digit year (24) using modulo 100
- * 2. Use BitsEncoder to get BCD representation (e.g., 24 → 0x24 = 0010 0100)
- * 3. Extract individual bits from BCD result
- * 4. Write bits to appropriate WWVB frame positions (LSB to MSB order)
+ * 2. Use BitsEncoder to organize digits into nibbles (e.g., 24 → 0x0024)
+ * 3. Extract individual bits to produce weighted binary encoding
+ * 4. Write bits to appropriate WWVB frame positions
  * 
- * Example: year=2024 → year_bcd=24 → bits_result=0x0024 (binary: 0000 0000 0010 0100)
- *   Position 45: bit 7 (MSB of upper nibble) = 0
- *   Position 46: bit 6                        = 0
- *   Position 47: bit 5                        = 1
- *   Position 48: bit 4 (LSB of upper nibble)  = 0
+ * Example: year=2024 → year_2digit=24 → bits_result=0x0024 (binary: 0000 0000 0010 0100)
+ *   Position 45: bit 7 = 0
+ *   Position 46: bit 6 = 0
+ *   Position 47: bit 5 = 1
+ *   Position 48: bit 4 = 0
  *   [Position 49 is a marker]
- *   Position 50: bit 3 (MSB of lower nibble)  = 0
- *   Position 51: bit 2                        = 1
- *   Position 52: bit 1                        = 0
- *   Position 53: bit 0 (LSB)                  = 0
+ *   Position 50: bit 3 = 0
+ *   Position 51: bit 2 = 1
+ *   Position 52: bit 1 = 0
+ *   Position 53: bit 0 = 0
  * 
  * @param year Full 4-digit year (WWVB_MIN_YEAR to WWVB_MAX_YEAR, e.g., 2024)
  * @param signal Pointer to 60-byte WWVB signal array to update
@@ -185,43 +185,42 @@ void EncodeYear(uint16_t year, volatile uint8_t *signal)
         return;
     }
 
-    const int year_bcd = year % BCD_DIVISOR_100;  // Convert to 2-digit year (e.g., 2024 → 24)
-    const uint16_t bits_result = BitsEncoder(year_bcd);  // Convert to BCD (e.g., 24 → 0x0024)
+    const int year_2digit = year % DIGIT_DIVISOR_100;  // Convert to 2-digit year (e.g., 2024 → 24)
+    const uint16_t bits_result = BitsEncoder(year_2digit);  // Organize digits (e.g., 24 → 0x0024)
 
     // Encode year into WWVB signal positions 45-48 and 50-53 (8 bits total)
-    // Extract and write individual bits from BCD result to frame positions
-    // Bits are written in MSB-to-LSB order within each nibble
-    signal[WWVB_YEAR_BIT_45] = (bits_result & 0x80) >> 7;  // Upper nibble bit 3 (MSB)
-    signal[WWVB_YEAR_BIT_46] = (bits_result & 0x40) >> 6;  // Upper nibble bit 2
-    signal[WWVB_YEAR_BIT_47] = (bits_result & 0x20) >> 5;  // Upper nibble bit 1
-    signal[WWVB_YEAR_BIT_48] = (bits_result & 0x10) >> 4;  // Upper nibble bit 0 (LSB)
+    // Extract and write individual bits to produce weighted binary encoding
+    signal[WWVB_YEAR_BIT_45] = (bits_result & 0x80) >> 7;  // Bit 7
+    signal[WWVB_YEAR_BIT_46] = (bits_result & 0x40) >> 6;  // Bit 6
+    signal[WWVB_YEAR_BIT_47] = (bits_result & 0x20) >> 5;  // Bit 5
+    signal[WWVB_YEAR_BIT_48] = (bits_result & 0x10) >> 4;  // Bit 4
     // Position 49 is a marker bit
-    signal[WWVB_YEAR_BIT_50] = (bits_result & 0x08) >> 3;  // Lower nibble bit 3 (MSB)
-    signal[WWVB_YEAR_BIT_51] = (bits_result & 0x04) >> 2;  // Lower nibble bit 2
-    signal[WWVB_YEAR_BIT_52] = (bits_result & 0x02) >> 1;  // Lower nibble bit 1
-    signal[WWVB_YEAR_BIT_53] = (bits_result & 0x01);       // Lower nibble bit 0 (LSB)
+    signal[WWVB_YEAR_BIT_50] = (bits_result & 0x08) >> 3;  // Bit 3
+    signal[WWVB_YEAR_BIT_51] = (bits_result & 0x04) >> 2;  // Bit 2
+    signal[WWVB_YEAR_BIT_52] = (bits_result & 0x02) >> 1;  // Bit 1
+    signal[WWVB_YEAR_BIT_53] = (bits_result & 0x01);       // Bit 0
 }
 
 /**
  * @brief Encode day of year into WWVB signal format
  * 
- * WWVB encodes the day of year (Julian day, 001-366) in 10 bit positions using BCD format.
- * The day is split across three groups with markers at positions 19, 24, and 29:
- * - Positions 22-23: Hundreds digit (0-3) - 2 bits
- * - Positions 25-28: Tens digit (0-9) - 4 bits
- * - Positions 30-33: Ones digit (0-9) - 4 bits
+ * WWVB encodes the day of year (Julian day, 001-366) in 10 bit positions using weighted binary.
+ * The day is split across three groups with markers/reserved at positions 19, 24, and 29:
+ * - Positions 22-23: Hundreds digit bits (weights 200, 100)
+ * - Positions 25-28: Tens digit bits (weights 80, 40, 20, 10)
+ * - Positions 30-33: Ones digit bits (weights 8, 4, 2, 1)
  * 
  * Example: day_of_year=365 → bits_result=0x0365 (binary: 0011 0110 0101)
- *   Position 22: bit 9 (hundreds bit 1)       = 1  (represents 2^9 = 512... but max is 366)
- *   Position 23: bit 8 (hundreds bit 0)       = 1  (represents 2^8 = 256)
- *   Position 25: bit 7 (tens bit 3, MSB)      = 0
- *   Position 26: bit 6 (tens bit 2)           = 1
- *   Position 27: bit 5 (tens bit 1)           = 1
- *   Position 28: bit 4 (tens bit 0, LSB)      = 0
- *   Position 30: bit 3 (ones bit 3, MSB)      = 0
- *   Position 31: bit 2 (ones bit 2)           = 1
- *   Position 32: bit 1 (ones bit 1)           = 0
- *   Position 33: bit 0 (ones bit 0, LSB)      = 1
+ *   Position 22: bit 9 = 1  (weight 200)
+ *   Position 23: bit 8 = 1  (weight 100)
+ *   Position 25: bit 7 = 0  (weight 80)
+ *   Position 26: bit 6 = 1  (weight 40)
+ *   Position 27: bit 5 = 1  (weight 20)
+ *   Position 28: bit 4 = 0  (weight 10)
+ *   Position 30: bit 3 = 0  (weight 8)
+ *   Position 31: bit 2 = 1  (weight 4)
+ *   Position 32: bit 1 = 0  (weight 2)
+ *   Position 33: bit 0 = 1  (weight 1)
  * 
  * @param dayOfYear Day of year (WWVB_MIN_DAY_OF_YEAR to WWVB_MAX_DAY_OF_YEAR, 1-366)
  * @param signal Pointer to 60-byte WWVB signal array to update
@@ -242,22 +241,22 @@ void EncodeDayOfYear(uint16_t day_of_year, volatile uint8_t *signal)
         return;
     }
 
-    const uint16_t bits_result = BitsEncoder(day_of_year);  // Convert to BCD (e.g., 365 → 0x0365)
+    const uint16_t bits_result = BitsEncoder(day_of_year);  // Organize digits (e.g., 365 → 0x0365)
 
     // Encode day of year into WWVB signal positions 22-23, 25-28, 30-33 (10 bits total)
-    // Markers at positions 19, 24, and 29 break up the encoding
-    signal[WWVB_DAY_BIT_22] = (bits_result & 0x0200) >> 9;  // Hundreds digit bit 1
-    signal[WWVB_DAY_BIT_23] = (bits_result & 0x0100) >> 8;  // Hundreds digit bit 0
+    // Markers/reserved at positions 19, 24, and 29 break up the encoding
+    signal[WWVB_DAY_BIT_22] = (bits_result & 0x0200) >> 9;  // Bit 9
+    signal[WWVB_DAY_BIT_23] = (bits_result & 0x0100) >> 8;  // Bit 8
     // Position 24 is reserved (always 0)
-    signal[WWVB_DAY_BIT_25] = (bits_result & 0x0080) >> 7;  // Tens digit bit 3 (MSB)
-    signal[WWVB_DAY_BIT_26] = (bits_result & 0x0040) >> 6;  // Tens digit bit 2
-    signal[WWVB_DAY_BIT_27] = (bits_result & 0x0020) >> 5;  // Tens digit bit 1
-    signal[WWVB_DAY_BIT_28] = (bits_result & 0x0010) >> 4;  // Tens digit bit 0 (LSB)
+    signal[WWVB_DAY_BIT_25] = (bits_result & 0x0080) >> 7;  // Bit 7
+    signal[WWVB_DAY_BIT_26] = (bits_result & 0x0040) >> 6;  // Bit 6
+    signal[WWVB_DAY_BIT_27] = (bits_result & 0x0020) >> 5;  // Bit 5
+    signal[WWVB_DAY_BIT_28] = (bits_result & 0x0010) >> 4;  // Bit 4
     // Position 29 is a marker bit
-    signal[WWVB_DAY_BIT_30] = (bits_result & 0x0008) >> 3;  // Ones digit bit 3 (MSB)
-    signal[WWVB_DAY_BIT_31] = (bits_result & 0x0004) >> 2;  // Ones digit bit 2
-    signal[WWVB_DAY_BIT_32] = (bits_result & 0x0002) >> 1;  // Ones digit bit 1
-    signal[WWVB_DAY_BIT_33] = (bits_result & 0x0001);       // Ones digit bit 0 (LSB)
+    signal[WWVB_DAY_BIT_30] = (bits_result & 0x0008) >> 3;  // Bit 3
+    signal[WWVB_DAY_BIT_31] = (bits_result & 0x0004) >> 2;  // Bit 2
+    signal[WWVB_DAY_BIT_32] = (bits_result & 0x0002) >> 1;  // Bit 1
+    signal[WWVB_DAY_BIT_33] = (bits_result & 0x0001);       // Bit 0
 }
 
 /**
