@@ -45,7 +45,7 @@ The codebase is organized into modular components:
 ```
 main/
 ├── main.c              - Main application logic, ISR coordination, double-buffering
-├── wwvb_encoder.c/h    - WWVB signal encoding (BCD, time data)
+├── wwvb_encoder.c/h    - WWVB signal encoding (weighted binary format)
 ├── signal_output.c/h   - 60 kHz PWM generation, timer management
 ├── wifi_manager.c/h    - WiFi provisioning and connection management
 ├── time_sync.c/h       - SNTP time synchronization
@@ -56,7 +56,7 @@ main/
 ### Module Responsibilities
 
 - **main.c**: Application entry point, coordinates all modules, manages double-buffered WWVB signal arrays, and handles the per-second ISR that drives signal transmission
-- **wwvb_encoder**: Converts time data (year, day, hour, minute) into WWVB frame format using BCD encoding
+- **wwvb_encoder**: Converts time data (year, day, hour, minute) into WWVB frame format using weighted binary encoding
 - **signal_output**: Generates the 60 kHz carrier using ESP32 LEDC PWM and manages signal modulation timers
 - **wifi_manager**: Handles WiFi provisioning via BLE with cryptographically secure PoP generation
 - **time_sync**: Manages SNTP synchronization with configurable NTP server and retry logic
@@ -96,63 +96,76 @@ Each second of the 60-second frame transmits one bit. The atomic clock receiver:
 
 ### WWVB Frame Structure (60 bits, 0-59)
 
-The WWVB signal encodes time information in a 60-second frame using Binary-Coded Decimal (BCD):
+The WWVB signal encodes time information in a 60-second frame using weighted binary encoding:
 
 ```
-Position  Type        Data                Weight    Description
---------  ----------  ------------------  --------  ------------------------------------
-0         Marker      Frame Reference     -         Start of minute marker
-1-8       Data        Minutes             40-1      Current minute (00-59) in BCD
-9         Marker      Position Reference  -         Every 10 seconds
-10-11     Reserved    Always 0            -         Reserved bits
-12-18     Data        Hours               20-1      Current hour (00-23) in BCD
-19        Marker      Position Reference  -         Every 10 seconds
-20-21     Reserved    Always 0            -         Reserved bits
-22-33     Data        Day of Year         200-1     Julian day (001-366) in BCD
-34-35     Reserved    Always 0            -         Reserved bits
-36-43     Data        DUT1 (obsolete)     -         Set to 0 (deprecated)
-44        Reserved    Always 0            -         Reserved bit
-45-53     Data        Year                80-1      2-digit year (00-99) in BCD
-54        Reserved    Always 0            -         Reserved bit
-55        Data        Leap Year           -         1 if leap year, 0 otherwise
-56        Data        Leap Second         -         1 if leap second at end of month
-57-58     Data        DST Status          -         Both bits: 11=DST, 00=Standard
-59        Marker      End of Frame        -         End of minute marker
+Position  Type        Data                Weight              Description
+--------  ----------  ------------------  ------------------  ------------------------------------
+0         Marker      Frame Reference     -                   Start of minute marker
+1-8       Data        Minutes             4,2,1,80,40,20,10   Minute (00-59) weighted binary; pos 1-3,5-8 (pos 4 reserved)
+9         Marker      Position Reference  -                   Every 10 seconds
+10-11     Reserved    Always 0            -                   Reserved bits
+12-18     Data        Hours               20,10,8,4,2,1       Hour (00-23) weighted binary; pos 12-13,15-18 (pos 14 reserved)
+19        Marker      Position Reference  -                   Every 10 seconds
+20-21     Reserved    Always 0            -                   Reserved bits
+22-33     Data        Day of Year         200-1               Julian day (001-366)
+34-35     Reserved    Always 0            -                   Reserved bits
+36-43     Data        DUT1 (obsolete)     -                   Set to 0 (deprecated)
+44        Reserved    Always 0            -                   Reserved bit
+45-53     Data        Year                80-1                2-digit year (00-99)
+54        Reserved    Always 0            -                   Reserved bit
+55        Data        Leap Year           -                   1 if leap year, 0 otherwise
+56        Data        Leap Second         -                   1 if leap second at end of month
+57-58     Data        DST Status          -                   Both bits: 11=DST, 00=Standard
+59        Marker      End of Frame        -                   End of minute marker
 
 Marker positions: 0, 9, 19, 29, 39, 49, 59 (every 10 seconds, plus start/end)
 ```
 
-**BCD (Binary-Coded Decimal) Encoding:**
+**Weighted Binary Encoding:**
 
-BCD represents each decimal digit as a 4-bit binary number. For example:
-- Decimal 24 = 0010 0100 in BCD (2 in upper nibble, 4 in lower nibble)
-- Year 2024 → 24 → bits represent: 0010 0100
-- Hour 13 → bits represent: 0001 0011
+WWVB uses weighted binary encoding where each bit position has a specific weight that contributes to the final value. Unlike pure binary (where positions are powers of 2: 1,2,4,8,16,32...), WWVB uses custom weights that make the values easy to interpret.
 
-The BitsEncoder function converts decimal values to BCD by:
-1. Extracting hundreds digit: `n / 100`
-2. Extracting tens digit: `(n / 10) % 10`
-3. Extracting ones digit: `n % 10`
-4. Packing into a 16-bit value with each digit in a 4-bit nibble
+**Encoding weights by field:**
+- **Minutes** (positions 1-3, 5-8): weights 4, 2, 1, 80, 40, 20, 10
+  - Position 4 is reserved
+  - Note: Weight 80 is never used since minutes max at 59 (5 tens)
+- **Hours** (positions 12-13, 15-18): weights 20, 10, 8, 4, 2, 1
+  - Position 14 is reserved
+- **Day of Year** (positions 22-23, 25-28, 30-33): weights 200, 100, 80, 40, 20, 10, 8, 4, 2, 1
+  - Positions 24, 29 are reserved/markers
+- **Year** (positions 45-48, 50-53): weights 80, 40, 20, 10, 8, 4, 2, 1
+  - Position 49 is a marker
+
+**Implementation detail:**
+The code uses a helper function `BitsEncoder()` that organizes decimal digits into 4-bit nibbles (tens digit and ones digit). This makes it easier to extract the individual bits needed for WWVB's weighted encoding, but the transmitted signal is pure weighted binary, not BCD.
 
 ### Example: Encoding Minute = 42
 
+**WWVB uses weighted binary encoding** where each bit position has a specific weight.
+
 ```
 Decimal: 42
-BCD breakdown:
-  - Tens digit: 4 → 0100 binary
-  - Ones digit: 2 → 0010 binary
-  - Combined: 0100 0010 (0x42 in BCD)
 
-WWVB Frame Positions (LSB to MSB):
-  Position 1: bit 0 of ones (2) → 0
-  Position 2: bit 1 of ones     → 1
-  Position 3: bit 2 of ones     → 0
-  Position 4: bit 3 of ones     → 0
-  Position 5: bit 0 of tens (4) → 0
-  Position 6: bit 1 of tens     → 0
-  Position 7: bit 2 of tens     → 1
-  Position 8: bit 3 of tens     → 0
+Bit weights and positions:
+  Position 1 (weight 4):  0  (42 needs: 40+2, not 4)
+  Position 2 (weight 2):  1  (42 needs: 2)
+  Position 3 (weight 1):  0  (42 needs: nothing more for ones)
+  Position 4: Reserved (always 0)
+  Position 5 (weight 80): 0  (42 < 80)
+  Position 6 (weight 40): 1  (42 needs: 40)
+  Position 7 (weight 20): 0  (remainder 2 < 20)
+  Position 8 (weight 10): 0  (remainder 2 < 10)
+
+Result: positions [1,2,3,5,6,7,8] = [0,1,0,0,1,0,0]
+
+Verification: 
+  0×4 + 1×2 + 0×1 + 0×80 + 1×40 + 0×20 + 0×10 = 2 + 40 = 42 ✓
+
+Implementation note:
+  The code uses BitsEncoder(42) → 0x0042 to organize digits (tens=4, ones=2)
+  Then extracts bits from each digit to produce the weighted binary encoding.
+  This is an implementation detail; WWVB transmits weighted binary, not BCD.
 ```
 
 ## System Architecture
@@ -620,7 +633,7 @@ The script now provides helpful diagnostics and suggestions when port issues occ
 The test suite includes:
 
 **WWVB Encoder Tests:**
-- BCD (Binary-Coded Decimal) encoding
+- Weighted binary encoding
 - Year, day, hour, and minute encoding
 - Marker and indicator bit positioning
 - Leap year detection
