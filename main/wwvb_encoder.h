@@ -66,8 +66,9 @@ void EncodeYear(uint16_t year, volatile uint8_t *signal);
 void EncodeDayOfYear(uint16_t day_of_year, volatile uint8_t *signal);
 
 /*
- * Encode hour into WWVB signal array (6 bit BCD)
+ * Encode hour into WWVB signal array (6 bits, weighted binary)
  * Encodes the hour in 24-hour format into WWVB signal positions.
+ * Uses weighted binary encoding: 20, 10, 8, 4, 2, 1
  * 
  * @param hour The hour (0 to WWVB_MAX_HOUR)
  * @param signal The WWVB_SIGNAL_ARRAY_SIZE-element signal array
@@ -75,8 +76,9 @@ void EncodeDayOfYear(uint16_t day_of_year, volatile uint8_t *signal);
 void EncodeHour(uint8_t hour, volatile uint8_t *signal);
 
 /*
- * Encode minute into WWVB signal array (7 bit BCD)
+ * Encode minute into WWVB signal array (7 bits, weighted binary)
  * Encodes the minute value into WWVB signal positions.
+ * Uses weighted binary encoding: 40, 20, 10, 8, 4, 2, 1
  * 
  * @param minute The minute (0 to WWVB_MAX_MINUTE)
  * @param signal The WWVB_SIGNAL_ARRAY_SIZE-element signal array
