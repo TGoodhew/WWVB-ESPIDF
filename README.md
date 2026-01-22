@@ -99,25 +99,25 @@ Each second of the 60-second frame transmits one bit. The atomic clock receiver:
 The WWVB signal encodes time information in a 60-second frame using Binary-Coded Decimal (BCD):
 
 ```
-Position  Type        Data                Weight    Description
---------  ----------  ------------------  --------  ------------------------------------
-0         Marker      Frame Reference     -         Start of minute marker
-1-8       Data        Minutes             4-1,40-10 Current minute (00-59) in BCD nibbles
-9         Marker      Position Reference  -         Every 10 seconds
-10-11     Reserved    Always 0            -         Reserved bits
-12-18     Data        Hours               20-10,8-1 Current hour (00-23) in BCD nibbles
-19        Marker      Position Reference  -         Every 10 seconds
-20-21     Reserved    Always 0            -         Reserved bits
-22-33     Data        Day of Year         200-1     Julian day (001-366) in BCD
-34-35     Reserved    Always 0            -         Reserved bits
-36-43     Data        DUT1 (obsolete)     -         Set to 0 (deprecated)
-44        Reserved    Always 0            -         Reserved bit
-45-53     Data        Year                80-1      2-digit year (00-99) in BCD
-54        Reserved    Always 0            -         Reserved bit
-55        Data        Leap Year           -         1 if leap year, 0 otherwise
-56        Data        Leap Second         -         1 if leap second at end of month
-57-58     Data        DST Status          -         Both bits: 11=DST, 00=Standard
-59        Marker      End of Frame        -         End of minute marker
+Position  Type        Data                Weight       Description
+--------  ----------  ------------------  -----------  ------------------------------------
+0         Marker      Frame Reference     -            Start of minute marker
+1-8       Data        Minutes             4,2,1,40,20,10 Current minute (00-59) in BCD nibbles
+9         Marker      Position Reference  -            Every 10 seconds
+10-11     Reserved    Always 0            -            Reserved bits
+12-18     Data        Hours               20,10,8,4,2,1 Current hour (00-23) in BCD nibbles
+19        Marker      Position Reference  -            Every 10 seconds
+20-21     Reserved    Always 0            -            Reserved bits
+22-33     Data        Day of Year         200-1        Julian day (001-366) in BCD
+34-35     Reserved    Always 0            -            Reserved bits
+36-43     Data        DUT1 (obsolete)     -            Set to 0 (deprecated)
+44        Reserved    Always 0            -            Reserved bit
+45-53     Data        Year                80-1         2-digit year (00-99) in BCD
+54        Reserved    Always 0            -            Reserved bit
+55        Data        Leap Year           -            1 if leap year, 0 otherwise
+56        Data        Leap Second         -            1 if leap second at end of month
+57-58     Data        DST Status          -            Both bits: 11=DST, 00=Standard
+59        Marker      End of Frame        -            End of minute marker
 
 Marker positions: 0, 9, 19, 29, 39, 49, 59 (every 10 seconds, plus start/end)
 ```
