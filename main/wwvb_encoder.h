@@ -2,11 +2,11 @@
  * WWVB Signal Encoding Module
  * 
  * Functions for encoding time data into WWVB signal format.
- * - All fields use Binary-Coded Decimal (BCD) format
- * - Minutes and Hours extract bits from BCD nibbles
- * - Year and Day of Year use sequential BCD bit extraction
+ * WWVB uses weighted binary encoding where each bit position has a specific weight.
+ * The BitsEncoder() helper organizes decimal digits into nibbles for easier bit extraction.
  * 
  * Reference: https://en.wikipedia.org/wiki/WWVB#Amplitude-modulated_time_code
+ * Reference: https://www.nist.gov/pml/time-and-frequency-division/time-distribution/radio-station-wwvb
  */
 
 #ifndef WWVB_ENCODER_H
@@ -41,16 +41,20 @@
 #define YEAR_OFFSET_1900 1900    // tm_year offset from 1900 (tm_year = year - 1900)
 
 /*
- * Encode a value in BCD format for WWVB
+ * Helper function to organize decimal digits into nibbles for bit extraction
+ * Converts a decimal value (0-999) into a format where each decimal digit
+ * occupies a 4-bit nibble: [hundreds][tens][ones]
+ * This simplifies extracting individual bits for WWVB weighted binary encoding.
  * 
- * @param n The value to encode
- * @return The BCD-encoded value
+ * @param n The decimal value to organize (0-999)
+ * @return Value with each decimal digit in its own nibble (e.g., 42 → 0x0042)
  */
 uint16_t BitsEncoder(uint16_t n);
 
 /*
- * Encode year into WWVB signal array (8 bit BCD)
+ * Encode year into WWVB signal array (8 bits, weighted binary)
  * Encodes the year modulo 100 (e.g., 2024 -> 24) into WWVB signal positions.
+ * Uses weighted binary encoding with bit weights.
  * 
  * @param year The year to encode (WWVB_MIN_YEAR to WWVB_MAX_YEAR)
  * @param signal The WWVB_SIGNAL_ARRAY_SIZE-element signal array
@@ -58,8 +62,9 @@ uint16_t BitsEncoder(uint16_t n);
 void EncodeYear(uint16_t year, volatile uint8_t *signal);
 
 /*
- * Encode day of year into WWVB signal array (10 bit BCD)
+ * Encode day of year into WWVB signal array (10 bits, weighted binary)
  * Encodes the day of year (Julian day) into WWVB signal positions.
+ * Uses weighted binary encoding with bit weights.
  * 
  * @param day_of_year The day of year (WWVB_MIN_DAY_OF_YEAR to WWVB_MAX_DAY_OF_YEAR)
  * @param signal The WWVB_SIGNAL_ARRAY_SIZE-element signal array
@@ -67,9 +72,9 @@ void EncodeYear(uint16_t year, volatile uint8_t *signal);
 void EncodeDayOfYear(uint16_t day_of_year, volatile uint8_t *signal);
 
 /*
- * Encode hour into WWVB signal array (6 bits, BCD with nibble bit extraction)
+ * Encode hour into WWVB signal array (6 bits, weighted binary)
  * Encodes the hour in 24-hour format into WWVB signal positions.
- * Uses BCD encoding with bit extraction: tens bits (2,1) and ones bits (8,4,2,1)
+ * Uses weighted binary encoding: positions 12-13 (weights 20,10) and 15-18 (weights 8,4,2,1)
  * 
  * @param hour The hour (0 to WWVB_MAX_HOUR)
  * @param signal The WWVB_SIGNAL_ARRAY_SIZE-element signal array
@@ -77,9 +82,9 @@ void EncodeDayOfYear(uint16_t day_of_year, volatile uint8_t *signal);
 void EncodeHour(uint8_t hour, volatile uint8_t *signal);
 
 /*
- * Encode minute into WWVB signal array (7 bits, BCD with nibble bit extraction)
+ * Encode minute into WWVB signal array (7 bits, weighted binary)
  * Encodes the minute value into WWVB signal positions.
- * Uses BCD encoding with bit extraction: ones bits (4,2,1) and tens bits (8,4,2,1)
+ * Uses weighted binary encoding: positions 1-3 (weights 4,2,1) and 5-8 (weights 80,40,20,10)
  * 
  * @param minute The minute (0 to WWVB_MAX_MINUTE)
  * @param signal The WWVB_SIGNAL_ARRAY_SIZE-element signal array

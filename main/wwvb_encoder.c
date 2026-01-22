@@ -95,11 +95,11 @@
 #define LEAP_YEAR_FEB_29 29      // Day value for February 29
 
 /**
- * @brief Encode a decimal value into Binary-Coded Decimal (BCD) format
+ * @brief Helper function to organize decimal digits into nibbles for bit extraction
  * 
- * BCD represents each decimal digit as a 4-bit binary number (nibble).
- * This function converts a decimal number (0-999) into a 16-bit BCD value
- * where each nibble represents one decimal digit.
+ * Converts a decimal value (0-999) into a format where each decimal digit
+ * occupies a 4-bit nibble. This organization simplifies extracting individual bits
+ * for WWVB's weighted binary encoding.
  * 
  * Algorithm:
  * 1. Extract hundreds digit: n / 100
@@ -119,8 +119,8 @@
  *   - Ones:     9 → 0x0009
  *   - Result: 0x0059 (bit pattern: 0000 0000 0101 1001)
  * 
- * @param n Decimal value to encode (0-999)
- * @return BCD-encoded 16-bit value with each decimal digit in a 4-bit nibble
+ * @param n Decimal value to organize (0-999)
+ * @return Value with each decimal digit in its own 4-bit nibble
  */
 uint16_t BitsEncoder(uint16_t n)
 {
@@ -263,28 +263,24 @@ void EncodeDayOfYear(uint16_t day_of_year, volatile uint8_t *signal)
 /**
  * @brief Encode hour value into WWVB signal format
  * 
- * WWVB encodes the hour (00-23) in 6 bit positions.
- * Hours are encoded using BCD (Binary-Coded Decimal), where each decimal digit
- * is encoded separately in its own 4-bit nibble, and individual bits are extracted
- * from those nibbles.
+ * WWVB encodes the hour (00-23) in 6 bit positions using weighted binary format.
+ * Each bit position has a specific weight that contributes to the final hour value.
  * 
- * Encoding structure:
- * - Positions 12-13: Bits from tens digit (weights within digit: 2, 1 → representing 20, 10)
+ * Bit weights:
+ * - Positions 12-13: weights 20, 10 (tens place)
  * - Position 14: Reserved (always 0)
- * - Positions 15-18: Bits from ones digit (weights within digit: 8, 4, 2, 1)
+ * - Positions 15-18: weights 8, 4, 2, 1 (ones place)
+ * 
+ * Implementation:
+ * The BitsEncoder() helper organizes the decimal digits into nibbles, allowing
+ * us to extract bits from the ones digit (bits 3-0) and tens digit (bits 7-4)
+ * separately, producing the weighted binary encoding WWVB requires.
  * 
  * Example: hour=13
- *   - BCD representation: 0x0013
- *   - Tens digit: 1 = 0001 binary
- *     - Position 12: bit 1 of tens = 0
- *     - Position 13: bit 0 of tens = 1
- *   - Ones digit: 3 = 0011 binary
- *     - Position 15: bit 3 of ones = 0
- *     - Position 16: bit 2 of ones = 0
- *     - Position 17: bit 1 of ones = 1
- *     - Position 18: bit 0 of ones = 1
- * 
- * Effective weights: [20,10,8,4,2,1] for positions [12,13,15,16,17,18]
+ *   - BitsEncoder(13) returns 0x0013 (tens=1 in bits 7-4, ones=3 in bits 3-0)
+ *   - Tens digit (1 = 0001): extract bits [1,0] → positions [12,13] → [0,1]
+ *   - Ones digit (3 = 0011): extract bits [3,2,1,0] → positions [15,16,17,18] → [0,0,1,1]
+ *   - Result represents: 0*20 + 1*10 + 0*8 + 0*4 + 1*2 + 1*1 = 13 ✓
  * 
  * @param hour Hour in 24-hour format (0 to WWVB_MAX_HOUR, 0-23)
  * @param signal Pointer to 60-byte WWVB signal array to update
@@ -304,20 +300,20 @@ void EncodeHour(uint8_t hour, volatile uint8_t *signal)
         return;
     }
 
-    const uint16_t bits_result = BitsEncoder(hour);  // Convert to BCD (e.g., 13 → 0x0013)
+    const uint16_t bits_result = BitsEncoder(hour);  // Organize digits: 13 → 0x0013
 
-    // Extract ones digit (bits 3-0 of BCD result)
+    // Extract ones digit (bits 3-0) to get weights 8,4,2,1
     const uint8_t ones = bits_result & 0x0F;
-    signal[WWVB_HOUR_BIT_15] = (ones >> 3) & 1;  // Bit 3 of ones digit (weight 8)
-    signal[WWVB_HOUR_BIT_16] = (ones >> 2) & 1;  // Bit 2 of ones digit (weight 4)
-    signal[WWVB_HOUR_BIT_17] = (ones >> 1) & 1;  // Bit 1 of ones digit (weight 2)
-    signal[WWVB_HOUR_BIT_18] = ones & 1;         // Bit 0 of ones digit (weight 1)
+    signal[WWVB_HOUR_BIT_15] = (ones >> 3) & 1;  // Bit 3 (weight 8)
+    signal[WWVB_HOUR_BIT_16] = (ones >> 2) & 1;  // Bit 2 (weight 4)
+    signal[WWVB_HOUR_BIT_17] = (ones >> 1) & 1;  // Bit 1 (weight 2)
+    signal[WWVB_HOUR_BIT_18] = ones & 1;         // Bit 0 (weight 1)
     
-    // Extract tens digit (bits 7-4 of BCD result)
+    // Extract tens digit (bits 7-4) to get weights 20,10
     // For hours 0-23, tens digit is 0-2, so only bits 1-0 are used
     const uint8_t tens = (bits_result >> 4) & 0x0F;
-    signal[WWVB_HOUR_BIT_12] = (tens >> 1) & 1;  // Bit 1 of tens digit (weight 2 → 20 hours)
-    signal[WWVB_HOUR_BIT_13] = tens & 1;         // Bit 0 of tens digit (weight 1 → 10 hours)
+    signal[WWVB_HOUR_BIT_12] = (tens >> 1) & 1;  // Bit 1 (weight 2 → 20 hours)
+    signal[WWVB_HOUR_BIT_13] = tens & 1;         // Bit 0 (weight 1 → 10 hours)
     
     // Position 14 is reserved
 }
@@ -325,29 +321,26 @@ void EncodeHour(uint8_t hour, volatile uint8_t *signal)
 /**
  * @brief Encode minute value into WWVB signal format
  * 
- * WWVB encodes the minute (00-59) in 7 bit positions.
- * Minutes are encoded using BCD (Binary-Coded Decimal), where each decimal digit
- * is encoded separately in its own 4-bit nibble, and individual bits are extracted
- * from those nibbles.
+ * WWVB encodes the minute (00-59) in 7 bit positions using weighted binary format.
+ * Each bit position has a specific weight that contributes to the final minute value.
  * 
- * Encoding structure:
- * - Positions 1-3: Bits from ones digit (weights within digit: 4, 2, 1)
+ * Bit weights:
+ * - Positions 1-3: weights 4, 2, 1 (ones place)
  * - Position 4: Reserved (always 0)
- * - Positions 5-8: Bits from tens digit (weights within digit: 8, 4, 2, 1 → representing 80, 40, 20, 10)
+ * - Positions 5-8: weights 80, 40, 20, 10 (tens place)
+ * 
+ * Implementation:
+ * The BitsEncoder() helper organizes the decimal digits into nibbles, allowing
+ * us to extract bits from the ones digit (bits 3-0) and tens digit (bits 7-4)
+ * separately, producing the weighted binary encoding WWVB requires.
  * 
  * Example: minute=42
- *   - BCD representation: 0x0042
- *   - Ones digit: 2 = 0010 binary
- *     - Position 1: bit 2 of ones = 0
- *     - Position 2: bit 1 of ones = 1
- *     - Position 3: bit 0 of ones = 0
- *   - Tens digit: 4 = 0100 binary
- *     - Position 5: bit 3 of tens = 0
- *     - Position 6: bit 2 of tens = 1
- *     - Position 7: bit 1 of tens = 0
- *     - Position 8: bit 0 of tens = 0
+ *   - BitsEncoder(42) returns 0x0042 (tens=4 in bits 7-4, ones=2 in bits 3-0)
+ *   - Ones digit (2 = 0010): extract bits [2,1,0] → positions [1,2,3] → [0,1,0]
+ *   - Tens digit (4 = 0100): extract bits [3,2,1,0] → positions [5,6,7,8] → [0,1,0,0]
+ *   - Result represents: 0*4 + 1*2 + 0*1 + 0*80 + 1*40 + 0*20 + 0*10 = 42 ✓
  * 
- * Effective weights: [4,2,1,8(unused for minutes),40,20,10] for positions [1,2,3,5,6,7,8]
+ * Note: For minutes (0-59), tens digit is 0-5, so bit 3 (weight 80) is always 0.
  * 
  * @param minute Minute value (0 to WWVB_MAX_MINUTE, 0-59)
  * @param signal Pointer to 60-byte WWVB signal array to update
@@ -367,23 +360,23 @@ void EncodeMinute(uint8_t minute, volatile uint8_t *signal)
         return;
     }
 
-    const uint16_t bits_result = BitsEncoder(minute);  // Convert to BCD (e.g., 42 → 0x0042)
+    const uint16_t bits_result = BitsEncoder(minute);  // Organize digits: 42 → 0x0042
 
-    // Extract ones digit (bits 3-0 of BCD result)
+    // Extract ones digit (bits 3-0) to get weights 4,2,1
     const uint8_t ones = bits_result & 0x0F;
-    signal[WWVB_MINUTE_BIT_1] = (ones >> 2) & 1;  // Bit 2 of ones digit (weight 4)
-    signal[WWVB_MINUTE_BIT_2] = (ones >> 1) & 1;  // Bit 1 of ones digit (weight 2)
-    signal[WWVB_MINUTE_BIT_3] = ones & 1;         // Bit 0 of ones digit (weight 1)
+    signal[WWVB_MINUTE_BIT_1] = (ones >> 2) & 1;  // Bit 2 (weight 4)
+    signal[WWVB_MINUTE_BIT_2] = (ones >> 1) & 1;  // Bit 1 (weight 2)
+    signal[WWVB_MINUTE_BIT_3] = ones & 1;         // Bit 0 (weight 1)
     
     // Position 4 is reserved
     
-    // Extract tens digit (bits 7-4 of BCD result)
-    // Tens digit for minutes ranges 0-5, so bit 3 (weight 8) is never set
+    // Extract tens digit (bits 7-4) to get weights 80,40,20,10
+    // For minutes 0-59, tens digit is 0-5, so bit 3 (weight 80) is always 0
     const uint8_t tens = (bits_result >> 4) & 0x0F;
-    signal[WWVB_MINUTE_BIT_5] = (tens >> 3) & 1;  // Bit 3 of tens (weight 8 → 80 minutes, always 0)
-    signal[WWVB_MINUTE_BIT_6] = (tens >> 2) & 1;  // Bit 2 of tens (weight 4 → 40 minutes)
-    signal[WWVB_MINUTE_BIT_7] = (tens >> 1) & 1;  // Bit 1 of tens (weight 2 → 20 minutes)
-    signal[WWVB_MINUTE_BIT_8] = tens & 1;         // Bit 0 of tens (weight 1 → 10 minutes)
+    signal[WWVB_MINUTE_BIT_5] = (tens >> 3) & 1;  // Bit 3 (weight 8 → 80 minutes, always 0)
+    signal[WWVB_MINUTE_BIT_6] = (tens >> 2) & 1;  // Bit 2 (weight 4 → 40 minutes)
+    signal[WWVB_MINUTE_BIT_7] = (tens >> 1) & 1;  // Bit 1 (weight 2 → 20 minutes)
+    signal[WWVB_MINUTE_BIT_8] = tens & 1;         // Bit 0 (weight 1 → 10 minutes)
 }
 
 /**
