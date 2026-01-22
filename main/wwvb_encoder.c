@@ -378,10 +378,10 @@ void EncodeMinute(uint8_t minute, volatile uint8_t *signal)
     
     // Extract tens digit (bits 7-4 of BCD result)
     const uint8_t tens = (bits_result >> 4) & 0x0F;
-    signal[WWVB_MINUTE_BIT_5] = (tens >> 3) & 1;  // Bit 3 of tens digit (weight 8, i.e., 80 minutes, but max tens is 5)
-    signal[WWVB_MINUTE_BIT_6] = (tens >> 2) & 1;  // Bit 2 of tens digit (weight 4, i.e., 40 minutes)
-    signal[WWVB_MINUTE_BIT_7] = (tens >> 1) & 1;  // Bit 1 of tens digit (weight 2, i.e., 20 minutes)
-    signal[WWVB_MINUTE_BIT_8] = tens & 1;         // Bit 0 of tens digit (weight 1, i.e., 10 minutes)
+    signal[WWVB_MINUTE_BIT_5] = (tens >> 3) & 1;  // Bit 3 of tens digit (weight 8→80 min, unused since max tens=5)
+    signal[WWVB_MINUTE_BIT_6] = (tens >> 2) & 1;  // Bit 2 of tens digit (weight 4→40 minutes)
+    signal[WWVB_MINUTE_BIT_7] = (tens >> 1) & 1;  // Bit 1 of tens digit (weight 2→20 minutes)
+    signal[WWVB_MINUTE_BIT_8] = tens & 1;         // Bit 0 of tens digit (weight 1→10 minutes)
 }
 
 /**
