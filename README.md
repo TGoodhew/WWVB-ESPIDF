@@ -45,7 +45,7 @@ The codebase is organized into modular components:
 ```
 main/
 ├── main.c              - Main application logic, ISR coordination, double-buffering
-├── wwvb_encoder.c/h    - WWVB signal encoding (weighted binary for min/hour, BCD for year/day)
+├── wwvb_encoder.c/h    - WWVB signal encoding (BCD with nibble bit extraction)
 ├── signal_output.c/h   - 60 kHz PWM generation, timer management
 ├── wifi_manager.c/h    - WiFi provisioning and connection management
 ├── time_sync.c/h       - SNTP time synchronization
@@ -56,7 +56,7 @@ main/
 ### Module Responsibilities
 
 - **main.c**: Application entry point, coordinates all modules, manages double-buffered WWVB signal arrays, and handles the per-second ISR that drives signal transmission
-- **wwvb_encoder**: Converts time data (year, day, hour, minute) into WWVB frame format using weighted binary encoding for minutes/hours and BCD for year/day
+- **wwvb_encoder**: Converts time data (year, day, hour, minute) into WWVB frame format using BCD encoding with proper bit extraction from nibbles
 - **signal_output**: Generates the 60 kHz carrier using ESP32 LEDC PWM and manages signal modulation timers
 - **wifi_manager**: Handles WiFi provisioning via BLE with cryptographically secure PoP generation
 - **time_sync**: Manages SNTP synchronization with configurable NTP server and retry logic
@@ -102,10 +102,10 @@ The WWVB signal encodes time information in a 60-second frame using Binary-Coded
 Position  Type        Data                Weight    Description
 --------  ----------  ------------------  --------  ------------------------------------
 0         Marker      Frame Reference     -         Start of minute marker
-1-8       Data        Minutes             40-1      Current minute (00-59) in weighted binary
+1-8       Data        Minutes             4-1,40-10 Current minute (00-59) in BCD nibbles
 9         Marker      Position Reference  -         Every 10 seconds
 10-11     Reserved    Always 0            -         Reserved bits
-12-18     Data        Hours               20-1      Current hour (00-23) in weighted binary
+12-18     Data        Hours               20-10,8-1 Current hour (00-23) in BCD nibbles
 19        Marker      Position Reference  -         Every 10 seconds
 20-21     Reserved    Always 0            -         Reserved bits
 22-33     Data        Day of Year         200-1     Julian day (001-366) in BCD
@@ -124,20 +124,18 @@ Marker positions: 0, 9, 19, 29, 39, 49, 59 (every 10 seconds, plus start/end)
 
 **BCD (Binary-Coded Decimal) Encoding:**
 
-BCD represents each decimal digit as a 4-bit binary number. For example:
-- Decimal 24 = 0010 0100 in BCD (2 in upper nibble, 4 in lower nibble)
-- Year 2024 → 24 → bits represent: 0010 0100
-- Hour 13 → bits represent: 0001 0011
+BCD represents each decimal digit as a 4-bit binary number. WWVB uses BCD for all time fields (minutes, hours, day, year), extracting individual bits from the BCD nibbles.
 
-**Weighted Binary Encoding:**
+For minutes and hours, bits are extracted from BCD nibbles:
+- **Minutes**: Ones digit bits (4,2,1) go to positions 1-3, tens digit bits (8,4,2,1) go to positions 5-8
+- **Hours**: Tens digit bits (2,1) go to positions 12-13, ones digit bits (8,4,2,1) go to positions 15-18
 
-Some WWVB fields (minutes and hours) use weighted binary encoding where each bit position has a specific weight that sums to the value:
-- Minutes use weights: 40, 20, 10, 8, 4, 2, 1
-- Hours use weights: 20, 10, 8, 4, 2, 1
+Example: Minute 42
+- BCD: 0x0042 (tens=4=0100, ones=2=0010)
+- Ones bits [2,1,0] → positions [1,2,3] → [0,1,0]
+- Tens bits [3,2,1,0] → positions [5,6,7,8] → [0,1,0,0]
 
-For example, minute 42 = 40 + 2, so only the bits for weights 40 and 2 are set to 1.
-
-**Important Note:** Year and Day of Year use BCD encoding, while Minutes and Hours use weighted binary encoding. This is an important distinction in the WWVB protocol!
+For year and day, BCD is used more straightforwardly with sequential bit extraction.
 
 The BitsEncoder function converts decimal values to BCD by:
 1. Extracting hundreds digit: `n / 100`
@@ -147,24 +145,25 @@ The BitsEncoder function converts decimal values to BCD by:
 
 ### Example: Encoding Minute = 42
 
-**Important:** Minutes and hours use **weighted binary encoding**, not BCD!
+**Important:** Minutes and hours use **BCD (Binary-Coded Decimal) encoding** with bit extraction from nibbles!
 
 ```
 Decimal: 42
-Weighted binary breakdown (weights: 40, 20, 10, 8, 4, 2, 1):
-  42 = 40 + 2
-  
-WWVB Frame Positions:
-  Position 1 (weight 40): 1 (42 >= 40)
-  Position 2 (weight 20): 0 (remainder 2 < 20)
-  Position 3 (weight 10): 0 (remainder 2 < 10)
-  Position 4: Reserved (always 0)
-  Position 5 (weight 8):  0 (remainder 2 < 8)
-  Position 6 (weight 4):  0 (remainder 2 < 4)
-  Position 7 (weight 2):  1 (remainder 2 >= 2)
-  Position 8 (weight 1):  0 (remainder 0 < 1)
+BCD representation: 0x0042 (tens=4, ones=2)
 
-Result: [1,0,0,_,0,0,1,0] where _ is the reserved bit
+Ones digit (2) = 0010 binary:
+  Position 1: bit 2 of ones = 0 (weight 4 within ones digit)
+  Position 2: bit 1 of ones = 1 (weight 2 within ones digit)
+  Position 3: bit 0 of ones = 0 (weight 1 within ones digit)
+  
+Tens digit (4) = 0100 binary:
+  Position 5: bit 3 of tens = 0 (weight 8, representing 80 minutes - unused for valid minutes)
+  Position 6: bit 2 of tens = 1 (weight 4, representing 40 minutes)
+  Position 7: bit 1 of tens = 0 (weight 2, representing 20 minutes)
+  Position 8: bit 0 of tens = 0 (weight 1, representing 10 minutes)
+
+Result: positions [1,2,3,5,6,7,8] = [0,1,0,0,1,0,0]
+Verification: (0*4 + 1*2 + 0*1) + (0*80 + 1*40 + 0*20 + 0*10) = 2 + 40 = 42 ✓
 ```
 
 ## System Architecture
