@@ -163,7 +163,11 @@ Tens digit (4) = 0100 binary:
   Position 8: bit 0 of tens = 0 (weight 1, representing 10 minutes)
 
 Result: positions [1,2,3,5,6,7,8] = [0,1,0,0,1,0,0]
-Verification: (0*4 + 1*2 + 0*1) + (0*80 + 1*40 + 0*20 + 0*10) = 2 + 40 = 42 ✓
+
+Verification: 
+  Ones digit: (0*4 + 1*2 + 0*1) = 2
+  Tens digit: (0*80 + 1*40 + 0*20 + 0*10) = 40
+  Total: 2 + 40 = 42 ✓
 ```
 
 ## System Architecture

@@ -314,9 +314,10 @@ void EncodeHour(uint8_t hour, volatile uint8_t *signal)
     signal[WWVB_HOUR_BIT_18] = ones & 1;         // Bit 0 of ones digit (weight 1)
     
     // Extract tens digit (bits 7-4 of BCD result)
+    // For hours 0-23, tens digit is 0-2, so only bits 1-0 are used
     const uint8_t tens = (bits_result >> 4) & 0x0F;
-    signal[WWVB_HOUR_BIT_12] = (tens >> 1) & 1;  // Bit 1 of tens digit (weight 2, i.e., 20 hours)
-    signal[WWVB_HOUR_BIT_13] = tens & 1;         // Bit 0 of tens digit (weight 1, i.e., 10 hours)
+    signal[WWVB_HOUR_BIT_12] = (tens >> 1) & 1;  // Bit 1 of tens digit (weight 2 → 20 hours)
+    signal[WWVB_HOUR_BIT_13] = tens & 1;         // Bit 0 of tens digit (weight 1 → 10 hours)
     
     // Position 14 is reserved
 }
@@ -379,10 +380,10 @@ void EncodeMinute(uint8_t minute, volatile uint8_t *signal)
     // Extract tens digit (bits 7-4 of BCD result)
     // Tens digit for minutes ranges 0-5, so bit 3 (weight 8) is never set
     const uint8_t tens = (bits_result >> 4) & 0x0F;
-    signal[WWVB_MINUTE_BIT_5] = (tens >> 3) & 1;  // Bit 3 of tens (weight 8→80 min, always 0 for valid minutes)
-    signal[WWVB_MINUTE_BIT_6] = (tens >> 2) & 1;  // Bit 2 of tens (weight 4→40 minutes)
-    signal[WWVB_MINUTE_BIT_7] = (tens >> 1) & 1;  // Bit 1 of tens (weight 2→20 minutes)
-    signal[WWVB_MINUTE_BIT_8] = tens & 1;         // Bit 0 of tens (weight 1→10 minutes)
+    signal[WWVB_MINUTE_BIT_5] = (tens >> 3) & 1;  // Bit 3 of tens (weight 8 → 80 minutes, always 0)
+    signal[WWVB_MINUTE_BIT_6] = (tens >> 2) & 1;  // Bit 2 of tens (weight 4 → 40 minutes)
+    signal[WWVB_MINUTE_BIT_7] = (tens >> 1) & 1;  // Bit 1 of tens (weight 2 → 20 minutes)
+    signal[WWVB_MINUTE_BIT_8] = tens & 1;         // Bit 0 of tens (weight 1 → 10 minutes)
 }
 
 /**
