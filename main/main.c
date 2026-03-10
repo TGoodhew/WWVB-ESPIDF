@@ -338,7 +338,7 @@ void TimerSecond_ISR(void *param)
       // Defer debug output to task context via queue (cannot printf in ISR)
       if (debug_queue_cached != NULL) {
           debug_msg_t msg = {.type = '0'};
-          xQueueSendFromISR(debug_queue_cached, &msg, NULL);
+          xQueueSend(debug_queue_cached, &msg, 0);
       }
       #endif
 
@@ -359,7 +359,7 @@ void TimerSecond_ISR(void *param)
       // Defer debug output to task context via queue
       if (debug_queue_cached != NULL) {
           debug_msg_t msg = {.type = '1'};
-          xQueueSendFromISR(debug_queue_cached, &msg, NULL);
+          xQueueSend(debug_queue_cached, &msg, 0);
       }
       #endif
 
@@ -380,7 +380,7 @@ void TimerSecond_ISR(void *param)
       // Defer debug output to task context via queue
       if (debug_queue_cached != NULL) {
           debug_msg_t msg = {.type = 'M'};
-          xQueueSendFromISR(debug_queue_cached, &msg, NULL);
+          xQueueSend(debug_queue_cached, &msg, 0);
       }
       #endif
 
@@ -409,7 +409,7 @@ void TimerSecond_ISR(void *param)
       // Log minute boundary in debug output
       if (debug_queue_cached != NULL) {
           debug_msg_t msg = {.type = 'N'};  // 'N' = Newline + timestamp
-          xQueueSendFromISR(debug_queue_cached, &msg, NULL);
+          xQueueSend(debug_queue_cached, &msg, 0);
       }
       #endif
   }

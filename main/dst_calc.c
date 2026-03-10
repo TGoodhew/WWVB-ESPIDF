@@ -29,9 +29,69 @@
 #define DST_SECOND_SUNDAY_OFFSET 7   // Days from first Sunday to second Sunday
 #define FIRST_DAY_OF_MONTH 1         // First day of any month
 
-// Zeller's congruence calculation constants
-#define ZELLER_MONTH_MULTIPLIER 13
-#define ZELLER_CENTURY_MULTIPLIER 5
+// Month/day helpers
+#define MONTH_MARCH 3
+#define MONTH_NOVEMBER 11
+
+// Cumulative days before each month in non-leap years (month 1-12)
+static const int CUMULATIVE_DAYS_BY_MONTH[12] = {
+    0,   // Jan
+    31,  // Feb
+    59,  // Mar
+    90,  // Apr
+    120, // May
+    151, // Jun
+    181, // Jul
+    212, // Aug
+    243, // Sep
+    273, // Oct
+    304, // Nov
+    334  // Dec
+};
+
+// Returns day-of-week where 0 = Sunday, 1 = Monday, ... 6 = Saturday.
+static int DayOfWeek(int year, int month, int day)
+{
+    int y = year;
+    int m = month;
+
+    if (m < MONTH_MARCH)
+    {
+        m += 12;
+        y -= 1;
+    }
+
+    const int year_of_century = y % LEAP_YEAR_DIVISOR_100;
+    const int century = y / LEAP_YEAR_DIVISOR_100;
+
+    // Zeller's congruence with Gregorian calendar.
+    const int h = (day + (13 * (m + 1)) / 5 + year_of_century +
+                   year_of_century / LEAP_YEAR_DIVISOR_4 +
+                   century / LEAP_YEAR_DIVISOR_4 +
+                   5 * century) % DAYS_PER_WEEK;
+
+    // Convert Zeller output (0=Saturday) to 0=Sunday.
+    return (h + ZELLER_OFFSET_TO_STANDARD) % DAYS_PER_WEEK;
+}
+
+static int DayOfYearFromMonthDay(int year, int month, int day)
+{
+    int day_of_year = CUMULATIVE_DAYS_BY_MONTH[month - 1] + day;
+
+    if (IsLeapYear(year) && month > 2)
+    {
+        day_of_year += 1;
+    }
+
+    return day_of_year;
+}
+
+static int NthSundayOfMonth(int year, int month, int n)
+{
+    const int first_day_dow = DayOfWeek(year, month, FIRST_DAY_OF_MONTH);
+    const int first_sunday = FIRST_DAY_OF_MONTH + ((DAYS_PER_WEEK - first_day_dow) % DAYS_PER_WEEK);
+    return first_sunday + (n - 1) * DST_SECOND_SUNDAY_OFFSET;
+}
 
 /**
  * @brief Determine if a year is a leap year
@@ -103,64 +163,11 @@ void CalculateDSTDays(int year, int *start_day, int *end_day)
         return;
     }
     
-    // Determine number of days in February for this year
-    const bool leap = IsLeapYear(year);
-    const int days_in_feb = leap ? DAYS_IN_FEBRUARY_LEAP : DAYS_IN_FEBRUARY_NORMAL;
-    
-    // === Calculate day-of-week for January 1 using Zeller's congruence ===
-    // In Zeller's algorithm, January is treated as month 13 of the previous year
-    const int y = year - 1;                                // Previous year for Zeller's
-    const int m = ZELLER_JANUARY_AS_MONTH_13;             // January as month 13
-    const int q = FIRST_DAY_OF_MONTH;                     // Day 1 of the month
-    
-    // Apply Zeller's congruence formula
-    const int century = y / LEAP_YEAR_DIVISOR_100;        // Century (e.g., 20 for 2023)
-    const int year_of_century = y % LEAP_YEAR_DIVISOR_100; // Year within century (e.g., 23)
-    
-    // Zeller's formula: h = (q + ⌊13(m+1)/5⌋ + K + ⌊K/4⌋ + ⌊J/4⌋ + 5J) mod 7
-    const int h = (q + ((ZELLER_MONTH_MULTIPLIER * (m + 1)) / ZELLER_CENTURY_MULTIPLIER) + 
-                   year_of_century + (year_of_century / LEAP_YEAR_DIVISOR_4) + 
-                   (century / LEAP_YEAR_DIVISOR_4) + ZELLER_CENTURY_MULTIPLIER * century) % DAYS_PER_WEEK;
-    
-    // Convert Zeller's result (0=Sat, 1=Sun, 2=Mon, ..., 6=Fri)
-    // to standard (0=Sun, 1=Mon, ..., 6=Sat)
-    const int jan1_dow = (h + ZELLER_OFFSET_TO_STANDARD) % DAYS_PER_WEEK;
-    
-    // === Calculate Second Sunday in March ===
-    // Find day-of-year for March 1
-    const int march1_doy = DAYS_IN_JANUARY + days_in_feb + FIRST_DAY_OF_MONTH;
-    
-    // Calculate day-of-week for March 1 based on January 1
-    // (Add days elapsed since Jan 1, minus 1 because we're counting from day 1)
-    const int march1_dow = (jan1_dow + (march1_doy - 1)) % DAYS_PER_WEEK;
-    
-    // Calculate days from March 1 until the first Sunday
-    // If March 1 is already Sunday (dow=0), then 0 days; otherwise (7 - dow) days
-    const int days_to_first_sunday = (march1_dow == DOW_SUNDAY) ? 0 : (DAYS_PER_WEEK - march1_dow);
-    
-    // Second Sunday is 7 days after first Sunday
-    const int second_sunday_date = FIRST_DAY_OF_MONTH + days_to_first_sunday + DST_SECOND_SUNDAY_OFFSET;
-    
-    // Convert to day-of-year (subtract 1 because march1_doy already includes March 1)
-    *start_day = march1_doy - 1 + second_sunday_date;
-    
-    // === Calculate First Sunday in November ===
-    // Find day-of-year for November 1
-    const int nov1_doy = DAYS_IN_JANUARY + days_in_feb + DAYS_IN_MARCH + DAYS_IN_APRIL + 
-                         DAYS_IN_MAY + DAYS_IN_JUNE + DAYS_IN_JULY + DAYS_IN_AUGUST + 
-                         DAYS_IN_SEPTEMBER + DAYS_IN_OCTOBER + FIRST_DAY_OF_MONTH;
-    
-    // Calculate day-of-week for November 1 based on January 1
-    const int nov1_dow = (jan1_dow + (nov1_doy - 1)) % DAYS_PER_WEEK;
-    
-    // Calculate days from November 1 until the first Sunday
-    const int days_to_first_sunday_nov = (nov1_dow == DOW_SUNDAY) ? 0 : (DAYS_PER_WEEK - nov1_dow);
-    
-    // First Sunday date in November
-    const int first_sunday_date = FIRST_DAY_OF_MONTH + days_to_first_sunday_nov;
-    
-    // Convert to day-of-year
-    *end_day = nov1_doy - 1 + first_sunday_date;
+    const int second_sunday_in_march = NthSundayOfMonth(year, MONTH_MARCH, 2);
+    const int first_sunday_in_november = NthSundayOfMonth(year, MONTH_NOVEMBER, 1);
+
+    *start_day = DayOfYearFromMonthDay(year, MONTH_MARCH, second_sunday_in_march);
+    *end_day = DayOfYearFromMonthDay(year, MONTH_NOVEMBER, first_sunday_in_november);
 }
 
 /**
