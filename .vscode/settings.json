@@ -15,5 +15,6 @@
     "idf.espIdfPath": "/opt/esp/idf",
     "idf.toolsPath": "/opt/esp",
     "idf.pythonBinPath": "/opt/esp/python_env/idf6.1_py3.12_env/bin/python",
-    "idf.port": "/dev/ttyUSB0"
+    "idf.port": "/dev/ttyUSB0",
+    "idf.currentSetup": "C:\\esp\\v5.5.3\\esp-idf"
 }
