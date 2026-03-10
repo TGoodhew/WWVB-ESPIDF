@@ -60,9 +60,6 @@ static wwvb_state_t wwvb_state = {
     .swap_pending = false
 };
 
-// Flag for signaling WWVB array updates from ISR to task
-static volatile bool update_wwvb_array = false;
-
 // Function prototypes
 
 /**
@@ -83,8 +80,9 @@ static volatile bool update_wwvb_array = false;
  * The encoded data is written to the staging buffer (not the active buffer).
  * It will become active at the next minute boundary when the ISR swaps pointers.
  * 
- * This function is called from the main task context (not ISR) when signaled
- * by the TimerSecond_ISR at slots 30 and 60.
+ * This function is called from the main task context every 500 ms. Because it only
+ * ever writes to the staging buffer (not active), and the ISR only reads from active,
+ * no locking is required.
  * 
  * @return true if encoding succeeded, false if time validation failed
  */
@@ -134,11 +132,10 @@ bool InitializeWWVBBuffer(void);
  * 
  * Timer Callback Design Considerations:
  * - **Timer task dispatch**: Runs in timer task context (default dispatch method)
- * - **Task notifications**: Notifies signal task instead of starting nested timers
  * - **Minimal execution time**: All operations are simple and deterministic
  * - **No blocking**: Never waits for anything, returns quickly
  * - **Atomic operations**: Pointer swap is naturally atomic on 32-bit architecture
- * - **Deferred logging**: Debug output is queued to a task, not printed in callback
+ * - **Direct debug output**: printf() is safe in timer task context (sufficient stack)
  * 
  * Timing is critical: This callback must complete in well under 1 millisecond to avoid
  * jitter in the signal timing. Typical execution time is <50 microseconds.
@@ -181,16 +178,11 @@ void app_main(void)
     // buffer0 is initially active, buffer1 is initially staging
     wwvb_state.active = wwvb_state.buffer0;
     wwvb_state.staging = wwvb_state.buffer1;
-    
-    // Note: We do NOT call SetupWWVBArray() here because the system time
-    // has not been synchronized yet via SNTP. Calling it now would result
-    // in an invalid time check failure, leaving the buffer as all zeros.
-    // Instead, SNTP_callback() will call InitializeWWVBBuffer(), which in turn
-    // invokes SetupWWVBArray() after time synchronization completes and before
-    // the timer starts.
 
     ESP_LOGI("SignalOutput", "Initializing Timers");
 
+    // Create timer handles before SNTP callback can fire, so StartSecondTimer()
+    // called from SNTP_callback always has a valid handle.
     SetupTimers();
 
     ESP_LOGI("SignalOutput", "Initializing Signal Output");
@@ -198,20 +190,19 @@ void app_main(void)
     // Setup 60 kHz carrier output using LEDC PWM
     Setup60KHzOutput();
 
-    // Create debug queue and task for ISR-to-task logging
-    InitDebugQueue();
+    ESP_LOGI("SNTP", "Starting SNTP time synchronization");
 
-    // Main loop: Check for WWVB array update requests from ISR
+    // Block until SNTP syncs (or retries are exhausted). SNTP_callback() will call
+    // InitializeWWVBBuffer() + StartSecondTimer() when synchronization succeeds.
+    // If the sync window expires, the SNTP client continues polling in the background
+    // and will invoke the callback when it eventually obtains a valid time.
+    SetupSNTP();
+
+    // Main loop: update the staging WWVB array every 500 ms.
+    // The ISR swaps staging → active at each minute boundary (slot 0) when swap_pending is set.
     while (1)
     {
-        // Check if the ISR signaled that we need to update the array
-        if (update_wwvb_array)
-        {
-            update_wwvb_array = false;
-            SetupWWVBArray();  // Encode current time into staging array
-        }
-        // Sleep for 500ms to ensure flag is checked frequently
-        // Updates happen when signaled by ISR (at slot 30 and slot 60, i.e., twice per minute)
+        SetupWWVBArray();  // Encode current time into staging array
         vTaskDelay(500 / portTICK_PERIOD_MS);
     }
 }
@@ -286,16 +277,6 @@ void TimerSecond_ISR(void *param)
 {
   (void)param; // Suppress unused parameter warning
   static bool ON;  // Debug LED state
-  static QueueHandle_t debug_queue_cached = NULL;
-  static TaskHandle_t signal_task_cached = NULL;
-  
-  // Cache handles on first call to avoid repeated function calls
-  if (debug_queue_cached == NULL) {
-      debug_queue_cached = GetDebugQueue();
-  }
-  if (signal_task_cached == NULL) {
-      signal_task_cached = GetSignalTaskHandle();
-  }
   
   // Toggle debug LED to provide visual indication of timer callback execution (1 Hz blink)
   ON = !ON;
@@ -309,14 +290,17 @@ void TimerSecond_ISR(void *param)
   // 1. This callback runs in timer task context (default dispatch method)
   // 2. Main task only writes to staging buffer (never reads active/staging pointers)
   // 3. Pointer assignments are atomic on 32-bit architecture
-  // 4. No nested timer operations (uses task notifications instead)
-  if (wwvb_state.slot == 0 && wwvb_state.swap_pending)
+    // 4. Carrier timing uses a dedicated one-shot timer, so the per-second callback stays short
+  if (wwvb_state.slot == 0)
   {
-      // Swap pointers: staging becomes active (transmitted), active becomes staging (writable)
-      volatile uint8_t *temp = wwvb_state.active;
-      wwvb_state.active = wwvb_state.staging;
-      wwvb_state.staging = temp;
-      wwvb_state.swap_pending = false;  // Clear flag
+      if (wwvb_state.swap_pending)
+      {
+          // Swap pointers: staging becomes active (transmitted), active becomes staging (writable)
+          volatile uint8_t *temp = wwvb_state.active;
+          wwvb_state.active = wwvb_state.staging;
+          wwvb_state.staging = temp;
+          wwvb_state.swap_pending = false;  // Clear flag
+      }
   }
 
   // === Slot Validation ===
@@ -335,89 +319,53 @@ void TimerSecond_ISR(void *param)
   case WWVB_BIT_ZERO:
   {
       #ifdef WWVBDEBUG
-      // Defer debug output to task context via queue (cannot printf in ISR)
-      if (debug_queue_cached != NULL) {
-          debug_msg_t msg = {.type = '0'};
-          xQueueSend(debug_queue_cached, &msg, 0);
-      }
+      printf("0");
       #endif
 
       // Bit '0': Reduce carrier power for 0.2 seconds
       ZeroCarrier();
 
-      // Notify signal modulation task to re-enable carrier after 200ms
-      // Using xTaskNotify (not FromISR) because callback runs in timer task context
-      if (signal_task_cached != NULL)
-      {
-          xTaskNotify(signal_task_cached, SIGNAL_NOTIF_BIT0, eSetBits);
-      }
+            ScheduleCarrierReenable(TIMER_BIT0_DURATION_US);
     }
   break;
   case WWVB_BIT_ONE:
   {
       #ifdef WWVBDEBUG
-      // Defer debug output to task context via queue
-      if (debug_queue_cached != NULL) {
-          debug_msg_t msg = {.type = '1'};
-          xQueueSend(debug_queue_cached, &msg, 0);
-      }
+      printf("1");
       #endif
 
       // Bit '1': Reduce carrier power for 0.5 seconds
       ZeroCarrier();
 
-      // Notify signal modulation task to re-enable carrier after 500ms
-      if (signal_task_cached != NULL)
-      {
-          xTaskNotify(signal_task_cached, SIGNAL_NOTIF_BIT1, eSetBits);
-      }
+      ScheduleCarrierReenable(TIMER_BIT1_DURATION_US);
 
   }
   break;
   case WWVB_BIT_MARKER:
   {
       #ifdef WWVBDEBUG
-      // Defer debug output to task context via queue
-      if (debug_queue_cached != NULL) {
-          debug_msg_t msg = {.type = 'M'};
-          xQueueSend(debug_queue_cached, &msg, 0);
-      }
+      printf("M");
       #endif
 
       // Marker: Reduce carrier power for 0.8 seconds
       ZeroCarrier();
 
-      // Notify signal modulation task to re-enable carrier after 800ms
-      if (signal_task_cached != NULL)
-      {
-          xTaskNotify(signal_task_cached, SIGNAL_NOTIF_MARKER, eSetBits);
-      }
+      ScheduleCarrierReenable(TIMER_MARKER_DURATION_US);
   }
   break;
   }
 
-  // === Frame Advancement and Update Signaling ===
+  // === Frame Advancement ===
   wwvb_state.slot++; // Advance to next bit position in the 60-second frame
   
   if (wwvb_state.slot == WWVB_SIGNAL_ARRAY_SIZE)
   {
       // End of minute reached (slot 60 → 0)
       wwvb_state.slot = 0; // Reset to start of next minute
-      update_wwvb_array = true; // Signal main task to encode next minute's data
       
       #ifdef WWVBDEBUG
-      // Log minute boundary in debug output
-      if (debug_queue_cached != NULL) {
-          debug_msg_t msg = {.type = 'N'};  // 'N' = Newline + timestamp
-          xQueueSend(debug_queue_cached, &msg, 0);
-      }
+      printf("\n");
+      LogCurrentTime();
       #endif
-  }
-  else if (wwvb_state.slot == WWVB_SIGNAL_ARRAY_SIZE / 2)
-  {
-      // Mid-minute checkpoint (slot 30)
-      // Request early update so staging buffer is ready well before minute boundary
-      // This provides a 30-second buffer for the main task to encode the data
-      update_wwvb_array = true;
   }
 }

@@ -9,131 +9,39 @@
 #include <esp_timer.h>
 #include <driver/ledc.h>
 #include <driver/gpio.h>
-#include <freertos/task.h>
 #include "sdkconfig.h"
-
-// Task and Buffer Size Constants
-#define DEBUG_TASK_STACK_SIZE 2048       // Stack size for debug task
-#define SIGNAL_TASK_STACK_SIZE 3072      // Stack size for signal modulation task
-#define SIGNAL_TASK_PRIORITY 6           // Priority for signal modulation task (higher than debug)
-
-// Task notification constants
-#define TASK_NOTIF_CLEAR_ALL 0xFFFFFFFF  // Clear all notification bits
 
 // Timer handles structure (only second timer needed)
 typedef struct {
     esp_timer_handle_t second;
+    esp_timer_handle_t reenable;
 } timer_handles_t;
 
 static timer_handles_t timers = {
-    .second = NULL
+    .second = NULL,
+    .reenable = NULL
 };
-
-// Task handle for signal modulation task
-static TaskHandle_t signal_task_handle = NULL;
 
 // 60KHz output
 static ledc_channel_config_t ledc_channel;
 
-// Debug queue for ISR to task communication
-static QueueHandle_t debug_queue = NULL;
-
 // External references to WWVB state (defined in main.c)
 extern void TimerSecond_ISR(void *param);
 
-QueueHandle_t GetDebugQueue(void)
-{
-    return debug_queue;
-}
-
-void InitDebugQueue(void)
-{
-    // Create debug queue for ISR to task communication
-    debug_queue = xQueueCreate(DEBUG_QUEUE_SIZE, sizeof(debug_msg_t));
-    if (debug_queue == NULL) {
-        ESP_LOGE("SignalOutput", "Failed to create debug queue");
-    } else {
-        // Create debug task to handle logging from ISR
-        BaseType_t task_created = xTaskCreate(DebugTask, "debug_task", DEBUG_TASK_STACK_SIZE, NULL, 5, NULL);
-        if (task_created != pdPASS) {
-            ESP_LOGE("SignalOutput", "Failed to create debug task");
-        }
-    }
-}
-
-void DebugTask(void *pvParameters)
-{
-    debug_msg_t msg;
-    
-    while (1) {
-        if (xQueueReceive(debug_queue, &msg, portMAX_DELAY) == pdTRUE) {
-            #ifdef WWVBDEBUG
-            if (msg.type == 'N') {
-                // Newline and time log
-                printf("\n");
-                LogCurrentTime();
-            } else {
-                // Print the character
-                printf("%c", msg.type);
-            }
-            #endif
-        }
-    }
-}
-
 /**
- * @brief Signal modulation task
+ * @brief Re-enable the 60 kHz carrier after the reduced-power interval.
  * 
- * This task handles carrier re-enable operations after reduced-power periods.
- * In ESP-IDF v5.5.2, calling esp_timer_start_once() from within an ESP_TIMER_ISR
- * callback can cause spinlock contention with WiFi's timer operations.
+ * This callback runs in esp_timer task context and restores the PWM duty cycle
+ * to 50%, re-enabling the carrier at a precise offset from the second timer edge.
  * 
- * This task uses FreeRTOS delays instead of nested timers, completely avoiding
- * the timer system for re-enable operations and eliminating spinlock conflicts.
- * 
- * Architecture:
- * - Second timer (default dispatch) notifies this task instead of starting nested timers
- * - Task uses vTaskDelay() for timing (separate from timer subsystem)
- * - Runs at high priority to ensure timely carrier re-enable
- * 
- * @param pvParameters Task parameters (unused)
+ * @param param Timer parameter (unused)
  */
-static void SignalModulationTask(void *pvParameters)
+static void CarrierReenableTimerCallback(void *param)
 {
-    (void)pvParameters;
-    uint32_t notification_value;
-    
-    ESP_LOGI("SignalOutput", "Signal modulation task started");
-    
-    while (1) {
-        // Wait for notification from second timer ISR
-        // ISR will send notification instead of starting nested timers
-        if (xTaskNotifyWait(0, TASK_NOTIF_CLEAR_ALL, &notification_value, portMAX_DELAY) == pdTRUE) {
-            // Determine delay based on bit type
-            TickType_t delay_ticks;
-            
-            if (notification_value & SIGNAL_NOTIF_BIT0) {
-                // Bit 0: Wait 200ms then re-enable carrier
-                delay_ticks = pdMS_TO_TICKS(200);
-            } else if (notification_value & SIGNAL_NOTIF_BIT1) {
-                // Bit 1: Wait 500ms then re-enable carrier
-                delay_ticks = pdMS_TO_TICKS(500);
-            } else if (notification_value & SIGNAL_NOTIF_MARKER) {
-                // Marker: Wait 800ms then re-enable carrier
-                delay_ticks = pdMS_TO_TICKS(800);
-            } else {
-                // Unknown notification, skip
-                continue;
-            }
-            
-            // Wait for the appropriate duration
-            vTaskDelay(delay_ticks);
-            
-            // Re-enable carrier (restore to full power)
-            ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, PWM_DUTY_CYCLE_50_PERCENT);
-            ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
-        }
-    }
+    (void)param;
+
+    ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, PWM_DUTY_CYCLE_50_PERCENT);
+    ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
 }
 
 /**
@@ -186,10 +94,10 @@ void Setup60KHzOutput(void)
 }
 
 /**
- * @brief Create and configure timer and task for WWVB signal generation
+ * @brief Create and configure timers for WWVB signal generation
  * 
- * This function creates the second timer and a dedicated signal modulation task.
- * This architecture avoids spinlock issues by eliminating nested timer operations.
+ * This function creates the 1 Hz frame timer and a one-shot timer used to
+ * restore the carrier after each reduced-power symbol interval.
  * 
  * Architecture:
  * 1. Second Timer (1 Hz, periodic, default dispatch):
@@ -197,62 +105,47 @@ void Setup60KHzOutput(void)
  *    - Advances through the 60-second WWVB frame
  *    - Reads the current bit value (0, 1, or marker)
  *    - Reduces carrier power (sets duty cycle to 0%)
- *    - Notifies signal modulation task (instead of starting nested timers)
+ *    - Starts the one-shot re-enable timer for the symbol duration
  * 
- * 2. Signal Modulation Task:
- *    - Waits for notification from second timer callback
- *    - Uses FreeRTOS delay (vTaskDelay) for appropriate duration
- *    - Restores carrier to full power after delay
- *    - Runs independently of timer subsystem, avoiding spinlock conflicts with WiFi
+ * 2. Re-enable Timer (one-shot, default dispatch):
+ *    - Fires 200 ms, 500 ms, or 800 ms after symbol start
+ *    - Restores the carrier to full power with hardware-timer timing
  * 
  * Signal Coordination Example (for a '1' bit):
  * ```
  * t=0.0s:  Second Timer callback fires
  *          └─> Carrier power reduced (0% duty)
- *          └─> Task notified with BIT1 flag
- * t=0.5s:  Task delay expires
+ *          └─> One-shot timer scheduled for 500 ms
+ * t=0.5s:  One-shot timer callback fires
  *          └─> Carrier power restored (50% duty)
  * t=1.0s:  Second Timer callback fires (next bit)
  *          └─> Repeat for next bit...
  * ```
- * 
- * This approach eliminates spinlock issues by avoiding esp_timer_start_once()
- * calls from within timer callback context, which can conflict with WiFi's timer usage.
  */
 void SetupTimers(void)
 {
-    // Create the 1 Hz second timer (periodic) - drives the entire signal generation
-    // Using default dispatch method (timer task context)
-    // Task notifications to SignalModulationTask avoid nested timer operations
+    // Create the 1 Hz second timer that drives frame transmission.
     const esp_timer_create_args_t timer_second_config = {
         .callback = &TimerSecond_ISR,
         .name = "One Second Timer"};
     ESP_ERROR_CHECK(esp_timer_create(&timer_second_config, &timers.second));
 
-    // Create signal modulation task to handle carrier re-enable
-    // This task uses FreeRTOS delays instead of nested timers, avoiding
-    // spinlock contention with WiFi's timer operations
-    BaseType_t task_created = xTaskCreate(
-        SignalModulationTask,
-        "signal_mod",
-        SIGNAL_TASK_STACK_SIZE,
-        NULL,
-        SIGNAL_TASK_PRIORITY,  // Higher than debug task, ensures timely carrier re-enable
-        &signal_task_handle
-    );
-    
-    if (task_created != pdPASS || signal_task_handle == NULL) {
-        ESP_LOGE("SignalOutput", "Failed to create signal modulation task");
-        // Delete the second timer to prevent callbacks that depend on a NULL task handle
+    // Create the one-shot timer that re-enables the carrier after each symbol.
+    const esp_timer_create_args_t timer_reenable_config = {
+        .callback = &CarrierReenableTimerCallback,
+        .name = "Carrier Reenable Timer"};
+
+    esp_err_t err = esp_timer_create(&timer_reenable_config, &timers.reenable);
+    if (err != ESP_OK) {
+        ESP_LOGE("SignalOutput", "Failed to create carrier re-enable timer: %s", esp_err_to_name(err));
         if (timers.second != NULL) {
             ESP_ERROR_CHECK(esp_timer_delete(timers.second));
             timers.second = NULL;
         }
-        signal_task_handle = NULL;  // Ensure handle is NULL on failure
         return;
-    } else {
-        ESP_LOGI("SignalOutput", "Signal modulation task created successfully");
     }
+
+    ESP_LOGI("SignalOutput", "Signal timers created successfully");
 }
 
 void StartSecondTimer(void)
@@ -293,8 +186,23 @@ void ZeroCarrier(void)
     ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
 }
 
-// Accessor for signal task handle (for timer callback use)
-TaskHandle_t GetSignalTaskHandle(void)
+void ScheduleCarrierReenable(uint64_t delay_us)
 {
-    return signal_task_handle;
+    if (timers.reenable == NULL)
+    {
+        ESP_LOGE("SignalOutput", "Carrier re-enable timer is NULL, cannot schedule restore");
+        return;
+    }
+
+    esp_err_t err = esp_timer_start_once(timers.reenable, delay_us);
+    if (err == ESP_ERR_INVALID_STATE)
+    {
+        ESP_ERROR_CHECK(esp_timer_stop(timers.reenable));
+        err = esp_timer_start_once(timers.reenable, delay_us);
+    }
+
+    if (err != ESP_OK)
+    {
+        ESP_LOGE("SignalOutput", "Failed to schedule carrier restore: %s", esp_err_to_name(err));
+    }
 }

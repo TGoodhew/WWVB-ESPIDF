@@ -9,8 +9,6 @@
 #define SIGNAL_OUTPUT_H
 
 #include <freertos/FreeRTOS.h>
-#include <freertos/queue.h>
-#include <freertos/task.h>
 #include <esp_timer.h>
 
 // WWVB Signal Constants
@@ -27,19 +25,6 @@
 #define TIMER_BIT1_DURATION_US 500000    // 0.5 second - WWVB bit '1' reduced power duration
 #define TIMER_MARKER_DURATION_US 800000  // 0.8 second - WWVB marker reduced power duration
 
-// Signal modulation task notification values (for timer callback use)
-#define SIGNAL_NOTIF_BIT0 (1 << 0)       // Bit 0: 200ms delay
-#define SIGNAL_NOTIF_BIT1 (1 << 1)       // Bit 1: 500ms delay
-#define SIGNAL_NOTIF_MARKER (1 << 2)     // Marker: 800ms delay
-
-// Debug queue for ISR to task communication
-#define DEBUG_QUEUE_SIZE 10
-
-// Debug message type for ISR to task communication
-typedef struct {
-    char type;  // '0', '1', 'M', or 'N' for newline/time log
-} debug_msg_t;
-
 /*
  * Setup the 60 kHz PWM output
  * Configures LEDC timer and channel for carrier generation.
@@ -48,12 +33,8 @@ typedef struct {
 void Setup60KHzOutput(void);
 
 /*
- * Setup timer and signal modulation task for WWVB signal generation
- * Creates the second timer using the default dispatch method (ESP_TIMER_TASK)
- * and a dedicated FreeRTOS task. The timer callback runs in the timer task
- * context rather than ISR context. The task handles carrier re-enable
- * operations using FreeRTOS delays, avoiding nested timer operations that
- * cause spinlock contention with WiFi.
+ * Setup timers for WWVB signal generation.
+ * Creates the 1 Hz frame timer and a one-shot carrier re-enable timer.
  */
 void SetupTimers(void);
 
@@ -72,35 +53,12 @@ void StartSecondTimer(void);
 void ZeroCarrier(void);
 
 /*
- * Debug task to handle logging from ISR context
- * Receives debug messages from ISR via queue and outputs them.
- * This prevents blocking operations in ISR context.
- * 
- * @param pvParameters Task parameters (unused)
+ * Schedule carrier re-enable after a precise delay.
+ * Uses a one-shot esp_timer to restore the PWM duty cycle.
+ *
+ * @param delay_us Delay in microseconds before the carrier is re-enabled
  */
-void DebugTask(void *pvParameters);
+void ScheduleCarrierReenable(uint64_t delay_us);
 
-/*
- * Get the debug queue handle
- * Returns the queue used for ISR-to-task communication.
- * 
- * @return Handle to the debug queue, or NULL if not initialized
- */
-QueueHandle_t GetDebugQueue(void);
-
-/*
- * Create the debug queue and task
- * Initializes the message queue and creates the debug task.
- * Must be called before starting signal generation.
- */
-void InitDebugQueue(void);
-
-/*
- * Get signal task handle for timer callback use
- * Returns the handle to the signal modulation task for task notifications.
- * 
- * @return Task handle, or NULL if not initialized
- */
-TaskHandle_t GetSignalTaskHandle(void);
 
 #endif // SIGNAL_OUTPUT_H
