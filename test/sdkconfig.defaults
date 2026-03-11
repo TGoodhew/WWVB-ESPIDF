@@ -1,6 +1,0 @@
-# ESP32 Flash Configuration for Adafruit Huzzah32 Featherboard
-# The Huzzah32 has 4MB flash (ESP32-WROOM-32)
-
-# Flash size configuration
-CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
-CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
