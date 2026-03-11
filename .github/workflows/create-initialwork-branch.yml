@@ -1,0 +1,43 @@
+name: Create initialwork branch
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - copilot/initialwork
+
+permissions:
+  contents: write
+
+jobs:
+  create-branch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create initialwork branch from commit 5eb3e12
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const sha = '5eb3e12e16ad96af69f1d7b9b1c3dee0f80bccb5';
+            const ref = 'refs/heads/initialwork';
+            try {
+              // Check if branch already exists
+              await github.rest.git.getRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: 'heads/initialwork',
+              });
+              console.log('Branch initialwork already exists.');
+            } catch (e) {
+              if (e.status === 404) {
+                // Create the branch
+                await github.rest.git.createRef({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: ref,
+                  sha: sha,
+                });
+                console.log(`Branch initialwork created from commit ${sha}`);
+              } else {
+                throw e;
+              }
+            }
