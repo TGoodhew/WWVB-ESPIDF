@@ -50,10 +50,10 @@ idf.py -p /dev/ttyUSB0 flash monitor  # Linux / WSL / macOS
 
 WiFi credentials are provisioned over Bluetooth Low Energy (BLE) on first boot using the **ESP BLE Provisioning** mobile app (available on iOS and Android).
 
-1. Flash the firmware and open the serial monitor.
-2. Note the `Provisioning PoP:` line printed to the console — this is your proof-of-possession PIN.
+1. Flash the firmware and open the serial monitor (optional, to observe provisioning progress).
+2. The firmware uses a fixed proof-of-possession (PoP) code: `abcd1234`.
 3. Open the **ESP BLE Provisioning** app and scan for the device (it appears as `PROV_XXXXXX`).
-4. Enter the PoP when prompted, then provide your Wi-Fi SSID and password.
+4. When prompted in the app, enter the PoP `abcd1234`, then provide your Wi-Fi SSID and password.
 5. Credentials are stored in NVS flash and are used automatically on every subsequent boot.
 
 The NTP server (`pool.ntp.org` by default) and GPIO pin assignments can be changed in `main/main.c`.
