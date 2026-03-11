@@ -2,6 +2,10 @@
 
 This is an emulator for the WWVB time signal running on an Adafruit Huzzah32 Featherboard (ESP32).
 
+# Code broken
+
+I introduced a bug somewhere and I made the slacker mistake of not testing against real hardware. I need to go back and rework the code as the bug seems to be subtle, and the signal looks the same on my scope.
+
 ## Overview
 
 The goal is to create a small device that gets the current time via NTP and generates an emulated WWVB signal on a GPIO pin. This allows atomic clocks to synchronize even when the real WWVB signal from Fort Collins, Colorado is weak or unavailable.
