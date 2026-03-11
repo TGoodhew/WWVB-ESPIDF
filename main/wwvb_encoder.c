@@ -324,9 +324,9 @@ void EncodeHour(uint8_t hour, volatile uint8_t *signal)
  * Each bit position has a specific weight that contributes to the final minute value.
  * 
  * Bit weights:
- * - Positions 1-3: weights 4, 2, 1 (ones place)
+ * - Positions 1-3: weights 40, 20, 10 (tens place)
  * - Position 4: Reserved (always 0)
- * - Positions 5-8: weights 80, 40, 20, 10 (tens place)
+ * - Positions 5-8: weights 8, 4, 2, 1 (ones place)
  * 
  * Implementation:
  * The BitsEncoder() helper organizes the decimal digits into nibbles, allowing
@@ -335,11 +335,11 @@ void EncodeHour(uint8_t hour, volatile uint8_t *signal)
  * 
  * Example: minute=42
  *   - BitsEncoder(42) returns 0x0042 (tens=4 in bits 7-4, ones=2 in bits 3-0)
- *   - Ones digit (2 = 0010): extract bits [2,1,0] → positions [1,2,3] → [0,1,0]
- *   - Tens digit (4 = 0100): extract bits [3,2,1,0] → positions [5,6,7,8] → [0,1,0,0]
- *   - Result represents: 0*4 + 1*2 + 0*1 + 0*80 + 1*40 + 0*20 + 0*10 = 42 ✓
+ *   - Tens digit (4 = 0100): extract bits [2,1,0] → positions [1,2,3] → [1,0,0]
+ *   - Ones digit (2 = 0010): extract bits [3,2,1,0] → positions [5,6,7,8] → [0,0,1,0]
+ *   - Result represents: 1*40 + 0*20 + 0*10 + 0*8 + 0*4 + 1*2 + 0*1 = 42 ✓
  * 
- * Note: For minutes (0-59), tens digit is 0-5, so bit 3 (weight 80) is always 0.
+ * Note: For minutes (0-59), only tens weights 40/20/10 and ones weights 8/4/2/1 are used.
  * 
  * @param minute Minute value (0 to WWVB_MAX_MINUTE, 0-59)
  * @param signal Pointer to 60-byte WWVB signal array to update
@@ -361,21 +361,20 @@ void EncodeMinute(uint8_t minute, volatile uint8_t *signal)
 
     const uint16_t bits_result = BitsEncoder(minute);  // Organize digits: 42 → 0x0042
 
-    // Extract ones digit (bits 3-0) to get weights 4,2,1
-    const uint8_t ones = bits_result & 0x0F;
-    signal[WWVB_MINUTE_BIT_1] = (ones >> 2) & 1;  // Bit 2 (weight 4)
-    signal[WWVB_MINUTE_BIT_2] = (ones >> 1) & 1;  // Bit 1 (weight 2)
-    signal[WWVB_MINUTE_BIT_3] = ones & 1;         // Bit 0 (weight 1)
+    // Extract tens digit (bits 7-4) to get weights 40,20,10
+    const uint8_t tens = (bits_result >> 4) & 0x0F;
+    signal[WWVB_MINUTE_BIT_1] = (tens >> 2) & 1;  // Bit 2 (weight 4 -> 40 minutes)
+    signal[WWVB_MINUTE_BIT_2] = (tens >> 1) & 1;  // Bit 1 (weight 2 -> 20 minutes)
+    signal[WWVB_MINUTE_BIT_3] = tens & 1;         // Bit 0 (weight 1 -> 10 minutes)
     
     // Position 4 is reserved
     
-    // Extract tens digit (bits 7-4) to get weights 80,40,20,10
-    // For minutes 0-59, tens digit is 0-5, so bit 3 (weight 80) is always 0
-    const uint8_t tens = (bits_result >> 4) & 0x0F;
-    signal[WWVB_MINUTE_BIT_5] = (tens >> 3) & 1;  // Bit 3 (weight 8 → 80 minutes, always 0)
-    signal[WWVB_MINUTE_BIT_6] = (tens >> 2) & 1;  // Bit 2 (weight 4 → 40 minutes)
-    signal[WWVB_MINUTE_BIT_7] = (tens >> 1) & 1;  // Bit 1 (weight 2 → 20 minutes)
-    signal[WWVB_MINUTE_BIT_8] = tens & 1;         // Bit 0 (weight 1 → 10 minutes)
+    // Extract ones digit (bits 3-0) to get weights 8,4,2,1
+    const uint8_t ones = bits_result & 0x0F;
+    signal[WWVB_MINUTE_BIT_5] = (ones >> 3) & 1;  // Bit 3 (weight 8)
+    signal[WWVB_MINUTE_BIT_6] = (ones >> 2) & 1;  // Bit 2 (weight 4)
+    signal[WWVB_MINUTE_BIT_7] = (ones >> 1) & 1;  // Bit 1 (weight 2)
+    signal[WWVB_MINUTE_BIT_8] = ones & 1;         // Bit 0 (weight 1)
 }
 
 /**

@@ -148,12 +148,12 @@ static void test_EncodeMinute_42(void)
     reset_test_signal();
     EncodeMinute(42, test_signal);
     
-    TEST_ASSERT_EQUAL_UINT8(0, test_signal[1]);
-    TEST_ASSERT_EQUAL_UINT8(1, test_signal[2]);
+    TEST_ASSERT_EQUAL_UINT8(1, test_signal[1]);
+    TEST_ASSERT_EQUAL_UINT8(0, test_signal[2]);
     TEST_ASSERT_EQUAL_UINT8(0, test_signal[3]);
     TEST_ASSERT_EQUAL_UINT8(0, test_signal[5]);
-    TEST_ASSERT_EQUAL_UINT8(1, test_signal[6]);
-    TEST_ASSERT_EQUAL_UINT8(0, test_signal[7]);
+    TEST_ASSERT_EQUAL_UINT8(0, test_signal[6]);
+    TEST_ASSERT_EQUAL_UINT8(1, test_signal[7]);
     TEST_ASSERT_EQUAL_UINT8(0, test_signal[8]);
 }
 
@@ -178,6 +178,11 @@ static void test_SetMarkersAndIndicators(void)
     TEST_ASSERT_EQUAL_UINT8(WWVB_BIT_ZERO, test_signal[14]);
     TEST_ASSERT_EQUAL_UINT8(WWVB_BIT_ZERO, test_signal[20]);
     TEST_ASSERT_EQUAL_UINT8(WWVB_BIT_ZERO, test_signal[21]);
+    TEST_ASSERT_EQUAL_UINT8(WWVB_BIT_ZERO, test_signal[24]);
+    TEST_ASSERT_EQUAL_UINT8(WWVB_BIT_ZERO, test_signal[34]);
+    TEST_ASSERT_EQUAL_UINT8(WWVB_BIT_ZERO, test_signal[35]);
+    TEST_ASSERT_EQUAL_UINT8(WWVB_BIT_ZERO, test_signal[44]);
+    TEST_ASSERT_EQUAL_UINT8(WWVB_BIT_ZERO, test_signal[54]);
 }
 
 static void test_SetLeapYear_2024(void)
