@@ -15,145 +15,87 @@
     0.6   Added SNTP call & synd to get UTC time
     0.7   Added 60KHz output using the ESP32 LEDC PWM
     0.8   Implemented ESP Logging & Error Checking
-    0.9   Refactored into modular architecture
-    1.0   Added comprehensive documentation for algorithms, signal format, and architecture
 */
 
 #include <stdio.h>
-#include <string.h>
-#include <time.h>
+#include <inttypes.h>
 #include "sdkconfig.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <esp_timer.h>
+#include <esp_sntp.h>
 #include <driver/gpio.h>
+#include <driver/ledc.h>
 #include <esp_log.h>
+#include <esp_wifi.h>
 #include <nvs_flash.h>
+#include <esp_netif.h>
+#include <esp_netif_sntp.h>
+#include <wifi_provisioning/manager.h>
+#include <wifi_provisioning/scheme_ble.h>
 
-// Common configuration
-#include "wwvb_config.h"
+#define WWVBDEBUG
 
-// Application modules
-#include "wwvb_encoder.h"
-#include "dst_calc.h"
-#include "wifi_manager.h"
-#include "time_sync.h"
-#include "signal_output.h"
+// Function Prototypes - I wanted to keep this as a single file if people wanted to grab it and drop it into their projects
+void encodeYear(uint16_t year, uint8_t *signal);
+void encodeDayOfYear(uint16_t dayOfYear, uint8_t *signal);
+void encodeHour(uint8_t hour, uint8_t *signal);
+void encodeMinute(uint8_t minute, uint8_t *signal);
+void setMarkersAndIndicators(uint8_t *signal);
+void setDUT1(uint8_t *signal);
+void setLeapYear(uint16_t year, uint8_t *signal);
+void setLeapSecond(bool IsLeap, uint8_t *signal);
+void setDST(bool IsDST, uint8_t *signal);
+uint16_t BitsEncoder(uint16_t n);
+void TimerSignalReenable_ISR();
+void ZeroCarrier();
+void TimerSecond_ISR();
+void BoardDebugTest();
+void SetupWiFi();
+void SetupSNTP();
+void SetupTimers();
+void SetupWWVBArray();
+bool isLeapYear(int year);
+void calculateDSTDays(int year, int *startDay, int *endDay);
+bool isDaylightSavingTime(int year, int daysPassed);
+void LogCurrentTime();
+static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
+static void get_device_service_name(char *service_name, size_t max);
+void Setup60KHzOutput();
+void SNTP_callback (struct timeval *tv);
 
-// WWVB state structure with double-buffering using pointer swapping
-// We use two arrays: one active (being transmitted) and one staging (being prepared)
-// This ensures the ISR always reads a complete, consistent 60-second frame
-typedef struct {
-    uint8_t buffer0[WWVB_SIGNAL_ARRAY_SIZE];  // First buffer
-    uint8_t buffer1[WWVB_SIGNAL_ARRAY_SIZE];  // Second buffer
-    volatile uint8_t *active;      // Pointer to array being transmitted by ISR
-    volatile uint8_t *staging;     // Pointer to array being prepared for next minute
-    volatile uint8_t slot;
-    volatile bool swap_pending;  // Flag to indicate staging array is ready to become active
-} wwvb_state_t;
+// WWVB related
+const char *ntpServer = "pool.ntp.org";
+uint8_t WWVBArray[60] = {0};
+volatile uint8_t slot = 0;
 
-static wwvb_state_t wwvb_state = {
-    .buffer0 = {0},
-    .buffer1 = {0},
-    .active = NULL,   // Will be initialized in app_main
-    .staging = NULL,  // Will be initialized in app_main
-    .slot = 0,
-    .swap_pending = false
-};
+// WiFi Provisioning
+bool is_provisioned = false;
+bool timer_Enabled = false;
+int s_retry_num = 0;
+EventGroupHandle_t s_wifi_event_group;
+const int WIFI_CONNECTED_BIT = BIT0;
+const int WIFI_FAIL_BIT = BIT1;
 
-// Function prototypes
+// // Bit & Marker timers
+esp_timer_handle_t TimerBit0 = NULL;
+esp_timer_handle_t TimerBit1 = NULL;
+esp_timer_handle_t TimerBitMarker = NULL;
 
-/**
- * @brief Setup WWVB signal array with current time data
- * 
- * Encodes the current UTC time into the staging WWVB signal array. This includes:
- * - Year (2-digit, positions 45-48, 50-53)
- * - Day of year (Julian day 1-366, positions 22-23, 25-28, 30-33)
- * - Hour (0-23, positions 12-13, 15-18)
- * - Minute (0-59, positions 1-3, 5-8)
- * - DST status (positions 57-58)
- * - Leap year indicator (position 55)
- * - Leap second warning (position 56) - always 0 in this implementation
- * - DUT1 bits (positions 36-38, 40-43) - always 0 (deprecated)
- * - Position markers (positions 0, 9, 19, 29, 39, 49, 59)
- * - Reserved bits (always 0)
- * 
- * The encoded data is written to the staging buffer (not the active buffer).
- * It will become active at the next minute boundary when the ISR swaps pointers.
- * 
- * This function is called from the main task context every 500 ms. Because it only
- * ever writes to the staging buffer (not active), and the ISR only reads from active,
- * no locking is required.
- * 
- * @return true if encoding succeeded, false if time validation failed
- */
-bool SetupWWVBArray(void);
+// // One Second timer
+esp_timer_handle_t TimerSecond = NULL;
 
-/**
- * @brief Initialize WWVB active buffer before timer starts
- * 
- * This function is called once after SNTP synchronization to prepare the
- * initial WWVB signal data before the timer starts transmitting. It:
- * 1. Encodes the current time into the staging buffer
- * 2. Copies staging buffer to active buffer for immediate transmission
- * 3. Resets the swap_pending flag
- * 
- * This ensures the first transmitted frame contains valid time data rather
- * than all zeros. Must be called after SNTP sync but before StartSecondTimer().
- * 
- * @return true if initialization succeeded, false if time encoding failed
- */
-bool InitializeWWVBBuffer(void);
-
-/**
- * @brief Main per-second timer callback that drives WWVB signal transmission
- * 
- * This timer callback is the heart of the WWVB emulator. It's called
- * precisely once per second by the ESP32 timer and is responsible for:
- * 
- * 1. **Double-Buffer Management**: At the start of each minute (slot 0), atomically
- *    swaps the active and staging buffer pointers if new data is ready. This ensures
- *    the callback always reads a complete, consistent 60-second frame. No spinlock is
- *    needed because pointer assignments are atomic on 32-bit architecture and there's
- *    no contention with the main task (which only writes to the staging buffer).
- * 
- * 2. **Bit Transmission**: Reads the current bit from the active buffer and modulates
- *    the carrier accordingly:
- *    - Bit '0': Reduce power for 0.2s (200ms)
- *    - Bit '1': Reduce power for 0.5s (500ms)
- *    - Marker: Reduce power for 0.8s (800ms)
- * 
- * 3. **Frame Advancement**: Increments the slot counter (0-59) to track position
- *    within the current minute. Resets to 0 after slot 59.
- * 
- * 4. **Update Signaling**: Sets flags to tell the main task when to encode the next
- *    minute's data:
- *    - At slot 30 (mid-minute): Prepare next frame early
- *    - At slot 60→0 (end of minute): Definitely prepare next frame
- * 
- * Timer Callback Design Considerations:
- * - **Timer task dispatch**: Runs in timer task context (default dispatch method)
- * - **Minimal execution time**: All operations are simple and deterministic
- * - **No blocking**: Never waits for anything, returns quickly
- * - **Atomic operations**: Pointer swap is naturally atomic on 32-bit architecture
- * - **Direct debug output**: printf() is safe in timer task context (sufficient stack)
- * 
- * Timing is critical: This callback must complete in well under 1 millisecond to avoid
- * jitter in the signal timing. Typical execution time is <50 microseconds.
- * 
- * @param param Timer parameter (unused, but required by esp_timer callback signature)
- */
-void TimerSecond_ISR(void *param);
+// 60KHz output
+ledc_channel_config_t ledc_channel;
 
 void app_main(void)
 {
-    // Disable output buffering for immediate console output
     setvbuf(stdout, NULL, _IONBF, 0);
 
     ESP_LOGI("GPIO", "Configuring GPIO");
 
-    // Configure debug LED GPIO
-    gpio_reset_pin((gpio_num_t)CONFIG_WWVB_DEBUG_LED_PIN);
-    gpio_set_direction((gpio_num_t)CONFIG_WWVB_DEBUG_LED_PIN, GPIO_MODE_OUTPUT);
+    gpio_reset_pin(GPIO_NUM_13);
+    gpio_set_direction(GPIO_NUM_13, GPIO_MODE_OUTPUT);
 
     ESP_LOGI("NVS", "Initializing NVS partition");
 
@@ -172,200 +114,564 @@ void app_main(void)
 
     SetupWiFi();
 
-    ESP_LOGI("WWVB", "Initializing WWVB buffers");
+    ESP_LOGI("SNTP", "Initializing SNTP");
 
-    // Initialize the double-buffer pointers
-    // buffer0 is initially active, buffer1 is initially staging
-    wwvb_state.active = wwvb_state.buffer0;
-    wwvb_state.staging = wwvb_state.buffer1;
-
-    ESP_LOGI("SignalOutput", "Initializing Timers");
-
-    // Create timer handles before SNTP callback can fire, so StartSecondTimer()
-    // called from SNTP_callback always has a valid handle.
-    SetupTimers();
-
-    ESP_LOGI("SignalOutput", "Initializing Signal Output");
-
-    // Setup 60 kHz carrier output using LEDC PWM
-    Setup60KHzOutput();
-
-    ESP_LOGI("SNTP", "Starting SNTP time synchronization");
-
-    // Block until SNTP syncs (or retries are exhausted). SNTP_callback() will call
-    // InitializeWWVBBuffer() + StartSecondTimer() when synchronization succeeds.
-    // If the sync window expires, the SNTP client continues polling in the background
-    // and will invoke the callback when it eventually obtains a valid time.
     SetupSNTP();
 
-    // Main loop: update the staging WWVB array every 500 ms.
-    // The ISR swaps staging → active at each minute boundary (slot 0) when swap_pending is set.
+    ESP_LOGI("SNTP", "Initializing WWVBArray");
+
+    SetupWWVBArray();
+
+    ESP_LOGI("SNTP", "Initializing Timers");
+
+    SetupTimers();
+
+    ESP_LOGI("SNTP", "Initializing Signal Output");
+
+    Setup60KHzOutput();
+
     while (1)
     {
-        SetupWWVBArray();  // Encode current time into staging array
+        SetupWWVBArray();
         vTaskDelay(500 / portTICK_PERIOD_MS);
     }
 }
 
-bool SetupWWVBArray(void)
+void SetupSNTP()
 {
-    time_t raw_time;
-    struct tm *utc_time;
+    esp_sntp_config_t sntp_config = ESP_NETIF_SNTP_DEFAULT_CONFIG(ntpServer);
+    sntp_config.sync_cb = SNTP_callback;
 
-    time(&raw_time);
-    utc_time = gmtime(&raw_time);
+    // sntp_set_time_sync_notification_cb(SNTP_callback);
+    ESP_ERROR_CHECK(esp_netif_sntp_init(&sntp_config));
 
-    // Validate time values before encoding
-    if (utc_time == NULL)
+    if (esp_netif_sntp_sync_wait(pdMS_TO_TICKS(10000)) != ESP_OK)
     {
-        ESP_LOGE("WWVB", "Failed to get UTC time, gmtime returned NULL");
-        return false;
+        ESP_LOGI("SNTP", "Failed to update system time within 10s timeout");
     }
-    
-    // Check for reasonable time values (year should be >= WWVB_MIN_YEAR)
-    // If time is before WWVB_MIN_YEAR, it likely means time hasn't been synchronized yet
-    if (utc_time->tm_year + YEAR_OFFSET_1900 < WWVB_MIN_YEAR)
+    else
     {
-        ESP_LOGE("WWVB", "Invalid system time detected (year=%d). Time may not be synchronized.", 
-                 utc_time->tm_year + YEAR_OFFSET_1900);
-        return false;
+        ESP_LOGI("SNTP", "System time updated");
     }
-
-    // Write to the staging array (not the active array being transmitted)
-    // The staging array will become active at the next minute boundary
-    EncodeYear(utc_time->tm_year + YEAR_OFFSET_1900, wwvb_state.staging);
-    EncodeDayOfYear(utc_time->tm_yday + 1, wwvb_state.staging);
-    EncodeHour(utc_time->tm_hour, wwvb_state.staging);
-    EncodeMinute(utc_time->tm_min, wwvb_state.staging);
-    SetMarkersAndIndicators(wwvb_state.staging);
-    SetDUT1(wwvb_state.staging); // We're ignoring DUT1 as it has been deprecated and not used in this scenario
-    SetLeapYear(utc_time->tm_year + YEAR_OFFSET_1900, wwvb_state.staging);
-    SetLeapSecond(false, wwvb_state.staging); // Ignore leap seconds in this scenario
-    SetDST(IsDaylightSavingTime(utc_time->tm_year + YEAR_OFFSET_1900, utc_time->tm_yday + 1), wwvb_state.staging);
-    
-    // Signal that the staging array is ready to be swapped at the next minute boundary
-    wwvb_state.swap_pending = true;
-    
-    return true;
 }
 
-bool InitializeWWVBBuffer(void)
+void SNTP_callback (struct timeval *tv)
 {
-    // Encode current time into staging buffer
-    if (!SetupWWVBArray())
+    ESP_LOGI("SNTP", "SNTP Syncronized");
+    ESP_ERROR_CHECK(esp_timer_start_periodic(TimerSecond, 1000000)); // 1 second
+}
+
+void SetupWiFi()
+{
+    /* Initialize TCP/IP */
+    ESP_ERROR_CHECK(esp_netif_init());
+
+    /* Initialize the event loop */
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    s_wifi_event_group = xEventGroupCreate();
+
+    /* Register our event handler for Wi-Fi, IP and Provisioning related events */
+    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_PROV_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(PROTOCOMM_TRANSPORT_BLE_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(PROTOCOMM_SECURITY_SESSION_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
+
+    /* Initialize Wi-Fi including netif with default config */
+    esp_netif_create_default_wifi_sta();
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+    /* Configuration for the provisioning manager */
+    wifi_prov_mgr_config_t wifi_prov_config = {
+        .scheme = wifi_prov_scheme_ble,
+        .scheme_event_handler = WIFI_PROV_SCHEME_BLE_EVENT_HANDLER_FREE_BTDM};
+
+    /* Initialize provisioning manager with the configuration parameters set above */
+    ESP_ERROR_CHECK(wifi_prov_mgr_init(wifi_prov_config));
+
+    /* Let's find out if the device is provisioned */
+    ESP_ERROR_CHECK(wifi_prov_mgr_is_provisioned(&is_provisioned));
+
+    ESP_LOGI("WiFI", "Is provisioned: %s", is_provisioned ? "true" : "false");
+
+    /* If device is not yet provisioned start provisioning service */
+    if (!is_provisioned)
     {
-        ESP_LOGE("WWVB", "Failed to initialize WWVB buffer: time encoding failed");
-        return false;
+        ESP_LOGI("WiFi", "Starting provisioning");
+
+        char service_name[12];
+        get_device_service_name(service_name, sizeof(service_name));
+
+        /* Do we want a proof-of-possession (ignored if Security 0 is selected):
+         *      - this should be a string with length > 0
+         *      - NULL if not used
+         */
+        const char *pop = "abcd1234";
+
+        /* This is the structure for passing security parameters
+         * for the protocomm security 1.
+         */
+        wifi_prov_security1_params_t *sec_params = pop;
+
+        uint8_t custom_service_uuid[] = {
+            /* LSB <---------------------------------------
+             * ---------------------------------------> MSB */
+            0xb4,
+            0xdf,
+            0x5a,
+            0x1c,
+            0x3f,
+            0x6b,
+            0xf4,
+            0xbf,
+            0xea,
+            0x4a,
+            0x82,
+            0x03,
+            0x04,
+            0x90,
+            0x1a,
+            0x02,
+        };
+
+        ESP_ERROR_CHECK(wifi_prov_scheme_ble_set_service_uuid(custom_service_uuid));
+
+        /* Start provisioning service */
+        ESP_ERROR_CHECK(wifi_prov_mgr_start_provisioning(WIFI_PROV_SECURITY_1, (const void *)sec_params, service_name, NULL));
     }
-    
-    // Copy staging to active for initial data before timer starts
-    // Use a loop instead of memcpy to respect volatile qualifier
-    for (int i = 0; i < WWVB_SIGNAL_ARRAY_SIZE; i++) {
-        wwvb_state.active[i] = wwvb_state.staging[i];
+    else
+    {
+        ESP_LOGI("WiFi", "Already provisioned, starting Wi-Fi STA");
+
+        /* We don't need the manager as device is already provisioned, so let's release it's resources */
+        wifi_prov_mgr_deinit();
+
+        /* Start Wi-Fi station */
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+        ESP_ERROR_CHECK(esp_wifi_start());
+
+        ESP_LOGI("WiFi", "Connected");
     }
-    
-    // Reset swap_pending flag since we manually copied the data
-    // The next update will set it to true again
-    wwvb_state.swap_pending = false;
-    
-    ESP_LOGI("WWVB", "Initial WWVB buffer initialized with current time");
-    
-    return true;
+}
+
+static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
+{
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) 
+    {
+        ESP_ERROR_CHECK(esp_wifi_connect());
+    } 
+    else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) 
+    {
+        if (s_retry_num < 10) 
+        {
+            ESP_ERROR_CHECK(esp_wifi_connect());
+            s_retry_num++;
+            ESP_LOGI("WiFi", "retry to connect to the AP");
+        } 
+        else 
+        {
+            xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
+        }
+        ESP_LOGI("WiFi","connect to the AP fail");
+    } 
+    else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) 
+    {
+        ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
+        ESP_LOGI("WiFi", "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
+        s_retry_num = 0;
+        xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+    } 
+    else if (event_base == WIFI_PROV_EVENT) 
+    {
+        switch (event_id) 
+        {
+            case WIFI_PROV_START:
+                ESP_LOGI("WiFi", "Provisioning started");
+                break;
+            case WIFI_PROV_CRED_RECV: 
+            {
+                wifi_sta_config_t *wifi_sta_cfg = (wifi_sta_config_t *)event_data;
+                ESP_LOGI("WiFi", "Received Wi-Fi credentials"
+                         "\n\tSSID     : %s\n\tPassword : %s",
+                         (const char *) wifi_sta_cfg->ssid,
+                         (const char *) wifi_sta_cfg->password);
+                break;
+            }
+            case WIFI_PROV_CRED_FAIL: 
+            {
+                wifi_prov_sta_fail_reason_t *reason = (wifi_prov_sta_fail_reason_t *)event_data;
+                ESP_LOGE("WiFi", "Provisioning failed!\n\tReason : %s" "\n\tPlease reset to factory and retry provisioning",  (*reason == WIFI_PROV_STA_AUTH_ERROR) ?  "Wi-Fi station authentication failed" : "Wi-Fi access-point not found");
+                break;
+            }
+            case WIFI_PROV_CRED_SUCCESS:
+                ESP_LOGI("WiFi", "Provisioning successful");
+                break;
+            case WIFI_PROV_END:
+                /* De-initialize manager once provisioning is finished */
+                wifi_prov_mgr_deinit();
+                break;
+            default:
+                break;
+        }
+    }
+}
+
+void LogCurrentTime()
+{
+    time_t rawtime;
+    struct tm *utcTime;
+
+    time(&rawtime);
+    utcTime = gmtime(&rawtime);
+
+    // Format the time as a string
+    char strftime_buf[64];
+    strftime(strftime_buf, sizeof(strftime_buf), "%c", utcTime);
+
+    // Write the system time as a log entry
+    ESP_LOGI("Time", "Current system time: %s", strftime_buf);
+}
+
+void SetupWWVBArray()
+{
+    time_t rawtime;
+    struct tm *utcTime;
+
+    time(&rawtime);
+    utcTime = gmtime(&rawtime);
+
+    // Using the current UTC time fill in the WWVBArray
+    encodeYear(utcTime->tm_year + 1900, WWVBArray);
+    encodeDayOfYear(utcTime->tm_yday + 1, WWVBArray);
+    encodeHour(utcTime->tm_hour, WWVBArray);
+    encodeMinute(utcTime->tm_min, WWVBArray);
+    setMarkersAndIndicators(WWVBArray);
+    setDUT1(WWVBArray); // We're ignoring DUT1 as it has been deprecated and not used in this scenario
+    setLeapYear(utcTime->tm_year + 1900, WWVBArray);
+    setLeapSecond(false, WWVBArray); // Ignore leap seconds in this scenario
+    setDST(isDaylightSavingTime(utcTime->tm_year + 1900, utcTime->tm_yday + 1), WWVBArray);
+}
+
+void SetupTimers()
+{
+    // Setup 1 second timer
+    const esp_timer_create_args_t timer_second_config = {
+        .callback = &TimerSecond_ISR,
+        .name = "One Second Timer"};
+    ESP_ERROR_CHECK(esp_timer_create(&timer_second_config, &TimerSecond));
+
+    // Setup Bit 0 timer
+    const esp_timer_create_args_t timer_bit0_config = {
+        .callback = &TimerSignalReenable_ISR,
+        .name = "Bit 0 Timer"};
+    ESP_ERROR_CHECK(esp_timer_create(&timer_bit0_config, &TimerBit0));
+            
+    // Setup Bit 1 timer
+    const esp_timer_create_args_t timer_bit1_config = {
+        .callback = &TimerSignalReenable_ISR,
+        .name = "Bit 1 Timer"};
+    ESP_ERROR_CHECK(esp_timer_create(&timer_bit1_config, &TimerBit1));
+
+    // Setup Bit Marker timer
+    const esp_timer_create_args_t timer_bitmarker_config = {
+        .callback = &TimerSignalReenable_ISR,
+        .name = "Bit Marker Timer"};
+    ESP_ERROR_CHECK(esp_timer_create(&timer_bitmarker_config, &TimerBitMarker));
+}
+
+// All the bit/marker timers just reenable the 50%^ duty cycle of the 60KHz signal
+void IRAM_ATTR TimerSignalReenable_ISR()
+{
+    //analogWrite(A0, 127);
+    ESP_ERROR_CHECK(ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, 127));
+    ESP_ERROR_CHECK(ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel));
 }
 
 void TimerSecond_ISR(void *param)
 {
-  (void)param; // Suppress unused parameter warning
-  static bool ON;  // Debug LED state
-  
-  // Toggle debug LED to provide visual indication of timer callback execution (1 Hz blink)
+  static bool ON;
   ON = !ON;
-  gpio_set_level((gpio_num_t)CONFIG_WWVB_DEBUG_LED_PIN, ON);
+  
+  ESP_ERROR_CHECK(gpio_set_level(GPIO_NUM_13, ON));
 
-  // === Double-Buffer Pointer Swap ===
-  // At the start of each minute (slot 0), swap active and staging buffers if new data is ready.
-  // This ensures we transmit a complete, consistent 60-second frame without glitches.
-  // Pointer swap is used instead of memcpy because it's atomic and extremely fast (<1µs).
-  // Note: No spinlock needed here because:
-  // 1. This callback runs in timer task context (default dispatch method)
-  // 2. Main task only writes to staging buffer (never reads active/staging pointers)
-  // 3. Pointer assignments are atomic on 32-bit architecture
-    // 4. Carrier timing uses a dedicated one-shot timer, so the per-second callback stays short
-  if (wwvb_state.slot == 0)
+  switch (WWVBArray[slot])
   {
-      if (wwvb_state.swap_pending)
-      {
-          // Swap pointers: staging becomes active (transmitted), active becomes staging (writable)
-          volatile uint8_t *temp = wwvb_state.active;
-          wwvb_state.active = wwvb_state.staging;
-          wwvb_state.staging = temp;
-          wwvb_state.swap_pending = false;  // Clear flag
-      }
-  }
-
-  // === Slot Validation ===
-  // Paranoid check: ensure slot is in valid range [0-59]
-  // This should never trigger in normal operation, but prevents buffer overflow if it does
-  if (wwvb_state.slot >= WWVB_SIGNAL_ARRAY_SIZE)
-  {
-      wwvb_state.slot = 0;
-  }
-
-  // === Bit Transmission ===
-  // Read current bit from active buffer and modulate carrier accordingly
-  // The switch statement handles three cases: '0', '1', and position marker
-  switch (wwvb_state.active[wwvb_state.slot])
-  {
-  case WWVB_BIT_ZERO:
+  case 0:
   {
       #ifdef WWVBDEBUG
       printf("0");
       #endif
 
-      // Bit '0': Reduce carrier power for 0.2 seconds
+      // 0 (0.2s reduced power)
       ZeroCarrier();
 
-            ScheduleCarrierReenable(TIMER_BIT0_DURATION_US);
+      // TimerBit0
+      ESP_ERROR_CHECK(esp_timer_start_once(TimerBit0, 200000)); // 0.2 second
     }
   break;
-  case WWVB_BIT_ONE:
+  case 1:
   {
       #ifdef WWVBDEBUG
       printf("1");
       #endif
 
-      // Bit '1': Reduce carrier power for 0.5 seconds
+      // 1 (0.5s reduced power)
       ZeroCarrier();
 
-      ScheduleCarrierReenable(TIMER_BIT1_DURATION_US);
+      // TimerBit1
+      ESP_ERROR_CHECK(esp_timer_start_once(TimerBit1, 500000)); // 0.5 second
 
   }
   break;
-  case WWVB_BIT_MARKER:
+  case 2:
   {
       #ifdef WWVBDEBUG
       printf("M");
       #endif
 
-      // Marker: Reduce carrier power for 0.8 seconds
+      // Marker (0.8s reduced power)
       ZeroCarrier();
 
-      ScheduleCarrierReenable(TIMER_MARKER_DURATION_US);
+      // TimerBitMarker
+      ESP_ERROR_CHECK(esp_timer_start_once(TimerBitMarker, 800000)); // 0.8 second
   }
   break;
   }
 
-  // === Frame Advancement ===
-  wwvb_state.slot++; // Advance to next bit position in the 60-second frame
-  
-  if (wwvb_state.slot == WWVB_SIGNAL_ARRAY_SIZE)
+  slot++; // Advance data slot in minute data packet
+  if (slot == 60)
   {
-      // End of minute reached (slot 60 → 0)
-      wwvb_state.slot = 0; // Reset to start of next minute
-      
+      slot = 0; // Reset slot to 0 if at 60 seconds
       #ifdef WWVBDEBUG
       printf("\n");
       LogCurrentTime();
       #endif
   }
+}
+
+void ZeroCarrier()
+{
+    ESP_ERROR_CHECK(ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, 0));
+    ESP_ERROR_CHECK(ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel));
+}
+
+// This rotuine takes the input value and then breaks it out in the individual BCD pattern that the WWVB format expects
+uint16_t BitsEncoder(uint16_t n)
+{
+    uint16_t result = 0;
+
+    const uint8_t div1 = n / 100;
+    const uint8_t div2 = (n - (div1 * 100)) / 10;
+    const uint8_t mod = n % 10;
+
+    result = (div1 & 0xF) << 8;
+    result |= (div2 & 0xF) << 4;
+    result |= (mod & 0xF);
+
+    return result;
+}
+
+// WWVB Expects year to be in 8 bit BCD - https://en.wikipedia.org/wiki/WWVB#Amplitude-modulated_time_code
+void encodeYear(uint16_t year, uint8_t *signal)
+{
+    int yearBCD = year % 100;
+    uint16_t bitsResult = BitsEncoder(yearBCD);
+
+    signal[45] = (bitsResult & 0x80) >> 7;
+    signal[46] = (bitsResult & 0x40) >> 6;
+    signal[47] = (bitsResult & 0x20) >> 5;
+    signal[48] = (bitsResult & 0x10) >> 4;
+    signal[50] = (bitsResult & 0x08) >> 3;
+    signal[51] = (bitsResult & 0x04) >> 2;
+    signal[52] = (bitsResult & 0x02) >> 1;
+    signal[53] = (bitsResult & 0x01);
+}
+
+// WWVB Expects the day of the year to be in 10 bit BCD - https://en.wikipedia.org/wiki/WWVB#Amplitude-modulated_time_code
+void encodeDayOfYear(uint16_t dayOfYear, uint8_t *signal)
+{
+    uint16_t bitsResult = BitsEncoder(dayOfYear);
+
+    signal[22] = (bitsResult & 0x0200) >> 9;
+    signal[23] = (bitsResult & 0x0100) >> 8;
+    signal[25] = (bitsResult & 0x0080) >> 7;
+    signal[26] = (bitsResult & 0x0040) >> 6;
+    signal[27] = (bitsResult & 0x0020) >> 5;
+    signal[28] = (bitsResult & 0x0010) >> 4;
+    signal[30] = (bitsResult & 0x0008) >> 3;
+    signal[31] = (bitsResult & 0x0004) >> 2;
+    signal[32] = (bitsResult & 0x0002) >> 1;
+    signal[33] = (bitsResult & 0x0001);
+}
+
+// WWVB Expects the hour to be in 6 bit BCD - https://en.wikipedia.org/wiki/WWVB#Amplitude-modulated_time_code
+void encodeHour(uint8_t hour, uint8_t *signal)
+{
+    uint16_t bitsResult = BitsEncoder(hour);
+
+    signal[12] = (bitsResult & 0x20) >> 5;
+    signal[13] = (bitsResult & 0x10) >> 4;
+    signal[15] = (bitsResult & 0x08) >> 3;
+    signal[16] = (bitsResult & 0x04) >> 2;
+    signal[17] = (bitsResult & 0x02) >> 1;
+    signal[18] = (bitsResult & 0x01);
+}
+
+// WWVB Expects minutes to be in 7 bit BCD - https://en.wikipedia.org/wiki/WWVB#Amplitude-modulated_time_code
+void encodeMinute(uint8_t minute, uint8_t *signal)
+{
+    uint16_t bitsResult = BitsEncoder(minute);
+
+    signal[1] = (bitsResult & 0x40) >> 6;
+    signal[2] = (bitsResult & 0x20) >> 5;
+    signal[3] = (bitsResult & 0x10) >> 4;
+    signal[5] = (bitsResult & 0x08) >> 3;
+    signal[6] = (bitsResult & 0x04) >> 2;
+    signal[7] = (bitsResult & 0x02) >> 1;
+    signal[8] = (bitsResult & 0x01);
+}
+
+// The WWVB signal has certain marker and bits that are always set to either a marker bit or a zero
+void setMarkersAndIndicators(uint8_t *signal)
+{
+    signal[0] = 2;  // Position marker
+    signal[9] = 2;  // Position marker
+    signal[19] = 2; // Position marker
+    signal[29] = 2; // Position marker
+    signal[39] = 2; // Position marker
+    signal[49] = 2; // Position marker
+    signal[59] = 2; // Position marker
+
+    signal[4] = 0;  // Always 0
+    signal[10] = 0; // Always 0
+    signal[11] = 0; // Always 0
+    signal[14] = 0; // Always 0
+    signal[20] = 0; // Always 0
+    signal[21] = 0; // Always 0
+    signal[24] = 0; // Always 0
+    signal[34] = 0; // Always 0
+    signal[35] = 0; // Always 0
+    signal[44] = 0; // Always 0
+    signal[54] = 0; // Always 0
+}
+
+// WWVB once supported celestial navigation uses but as it was deprecated and this scenario doesn't need it then just set those bits to 0 - https://en.wikipedia.org/wiki/WWVB#Amplitude-modulated_time_code
+void setDUT1(uint8_t *signal)
+{
+    // DUT1 is obselete, it was used for celestial navigation
+    signal[36] = 0;
+    signal[37] = 0;
+    signal[38] = 0;
+    signal[40] = 0;
+    signal[41] = 0;
+    signal[42] = 0;
+    signal[43] = 0;
+}
+
+// If you use the current year and mktime to set a date it will tell you if it is a leap year or not
+// I can't find where I got this code from so apologies for not crediting it to the appropriate person
+void setLeapYear(uint16_t year, uint8_t *signal)
+{
+    struct tm time_in = {0};
+    time_in.tm_year = year - 1900;
+    time_in.tm_mon = 2;  // March (0-based: January is 0)
+    time_in.tm_mday = 0; // Zero day of March will roll back to the last day of February
+
+    mktime(&time_in);
+
+    // If mktime leaves the day as 29 then it is a leap year
+    if (time_in.tm_mday == 29)
+        signal[55] = 1;
+    else
+        signal[55] = 0;
+}
+
+// WWVB Expects this bit for a leap second, I don't believe it is useful in this scenario but setting it just in case - https://en.wikipedia.org/wiki/WWVB#Amplitude-modulated_time_code
+void setLeapSecond(bool IsLeap, uint8_t *signal)
+{
+    if (IsLeap)
+        signal[56] = 1;
+    else
+        signal[56] = 0;
+}
+
+// WWVB Expects to have a DST bit set - It allows for warning of DST but we're ignoring that in this scenario - https://en.wikipedia.org/wiki/WWVB#Amplitude-modulated_time_code
+void setDST(bool IsDST, uint8_t *signal)
+{
+    if (IsDST)
+    {
+        signal[57] = 1;
+        signal[58] = 1;
+    }
+    else
+    {
+        signal[57] = 0;
+        signal[58] = 0;
+    }
+}
+
+void Setup60KHzOutput()
+{
+    ledc_timer_config_t ledc_timer = {
+        .duty_resolution = LEDC_TIMER_8_BIT, // resolution of PWM duty
+        .freq_hz = 60000,                     // frequency of PWM signal
+        .speed_mode = LEDC_HIGH_SPEED_MODE,   // timer mode
+        .timer_num = LEDC_TIMER_0             // timer index
+    };
+    
+    ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
+
+    ledc_channel.channel = LEDC_CHANNEL_0;
+    ledc_channel.duty = 127;
+    ledc_channel.gpio_num = GPIO_NUM_26; // A0 on the Huzzah32
+    ledc_channel.speed_mode = LEDC_HIGH_SPEED_MODE;
+    ledc_channel.timer_sel = LEDC_TIMER_0;
+
+    ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
+}
+
+static void get_device_service_name(char *service_name, size_t max)
+{
+    uint8_t eth_mac[6];
+    const char *ssid_prefix = "PROV_";
+    ESP_ERROR_CHECK(esp_wifi_get_mac(WIFI_IF_STA, eth_mac));
+    snprintf(service_name, max, "%s%02X%02X%02X",
+             ssid_prefix, eth_mac[3], eth_mac[4], eth_mac[5]);
+}
+
+// The following is AI generated code
+// This should be checked to see if it is actually works as expected
+// I just needed something quick to fill this DST calc
+
+// Function to determine if a year is a leap year
+bool isLeapYear(int year)
+{
+    if (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0))
+    {
+        return true;
+    }
+    return false;
+}
+
+// Function to calculate the start and end days for DST in a given year
+void calculateDSTDays(int year, int *startDay, int *endDay)
+{
+    bool leap = isLeapYear(year);
+    // Calculate the second Sunday in March
+    int daysInFeb = leap ? 29 : 28;
+    int daysUntilMarch = 31 + daysInFeb;
+    *startDay = daysUntilMarch + (14 - ((year + year / 4 - year / 100 + year / 400 + daysUntilMarch) % 7));
+
+    // Calculate the first Sunday in November
+    int daysUntilNov = 31 + daysInFeb + 31 + 30 + 31 + 30 + 31 + 31 + 30;
+    *endDay = daysUntilNov + (7 - ((year + year / 4 - year / 100 + year / 400 + daysUntilNov) % 7));
+}
+
+// Function to check if the current day is within DST period
+bool isDaylightSavingTime(int year, int daysPassed)
+{
+    int startDay, endDay;
+    calculateDSTDays(year, &startDay, &endDay);
+    return (daysPassed >= startDay && daysPassed < endDay);
 }
