@@ -2,5 +2,6 @@
     "C_Cpp.intelliSenseEngine": "default",
     "files.associations": {
         "esp_chip_info.h": "c"
-    }
+    },
+    "idf.currentSetup": "C:\\esp\\v5.5.3\\esp-idf"
 }
