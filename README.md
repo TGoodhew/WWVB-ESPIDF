@@ -147,3 +147,86 @@ idf.py -p /dev/ttyUSB0 flash monitor  # Linux / WSL / macOS
 | `FAIL` at the end | One or more tests failed — check the individual `FAIL` lines above. |
 
 If the monitor shows garbage or nothing, check that no other program (another monitor window, a serial terminal) is holding the COM port open.
+
+## Next Steps (Resume Guide)
+
+This section is intended to help you resume work quickly after a break.
+
+### Current implementation status
+
+- WWVB frame generation, minute-boundary alignment, and 1 Hz LED behavior are working on hardware.
+- Health logging was moved so it prints at frame boundaries (not mid-frame).
+- Runtime telemetry now includes frame counts and timing metrics:
+  - frame generation and swap counters
+  - second-tick period and max jitter (microseconds)
+  - minute period and max drift (microseconds)
+- WiFi connection state tracking and reconnect logging are implemented.
+
+### Recommended order for next work
+
+1. **Phase 6C - Configurability hardening**
+   - Move hardcoded runtime constants into Kconfig where practical.
+   - Candidate settings:
+     - WWVB output GPIO (currently fixed in code)
+     - Carrier frequency (currently 60 kHz)
+     - Reduced-power timing values for `0`, `1`, and marker bits
+     - Health log verbosity/toggle
+     - SNTP sync timeout and retry parameters
+   - Update both:
+     - `main/Kconfig` for app settings
+     - `README.md` configuration docs
+
+2. **Phase 6D - Test coverage expansion**
+   - Add/extend tests in `test/` for boundary-sensitive behavior:
+     - minute rollover
+     - day-of-year rollover
+     - year rollover and leap year edge cases
+     - marker and bit-position correctness
+   - Add a small runtime verification checklist for hardware smoke tests.
+
+3. **Operational polish**
+   - Add a short troubleshooting section for:
+     - no serial output
+     - no 1 Hz LED
+     - no clock sync despite stable waveform
+     - provisioning reset/recovery
+
+### Quick validation checklist before coding
+
+Run these first when returning:
+
+```bash
+idf.py build
+idf.py -p COM3 flash monitor
+```
+
+In monitor output, verify:
+
+- WWVB symbols stream continuously (`M`, `0`, `1`) with newline at frame boundary.
+- `HEALTH` log appears at frame boundary and includes timing fields.
+- No repeated WiFi disconnect storms unless AP is intentionally unavailable.
+
+### Prompt templates for future sessions
+
+Use any of these directly with Copilot to continue work:
+
+1. **Resume and assess status**
+   - "Resume this WWVB-ESPIDF project from README Next Steps. Inspect current `main/main.c`, `main/Kconfig`, and `test/` and tell me exactly what remains for Phase 6C and 6D."
+
+2. **Start Phase 6C (configurability)**
+   - "Implement Phase 6C from README: move WWVB GPIO, carrier frequency, modulation timings, and health-log toggle into Kconfig. Update code and README, then build and report diffs."
+
+3. **Start Phase 6D (tests)**
+   - "Implement Phase 6D from README: add boundary tests for minute/day/year rollover and marker positions in `test/`, run build, and summarize pass/fail output."
+
+4. **Hardware-focused debugging**
+   - "Use the current firmware telemetry fields to diagnose timing drift. Parse the HEALTH logs and propose fixes if max second jitter or minute drift exceed expected limits."
+
+5. **Safe continuation with minimal risk**
+   - "Make only small, reviewable changes for the next README step, validating with build after each change. Do not refactor unrelated code."
+
+### Notes for your future self
+
+- Keep changes incremental and hardware-validated.
+- Prefer one feature slice per commit (config, then tests, then docs).
+- If serial port is busy on Windows, close all monitor windows before reflashing.
