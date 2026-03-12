@@ -53,7 +53,6 @@ void TimerSecond_ISR();
 void TimerMinuteAlign_ISR(void *param);
 void TimerSyncWait_ISR(void *param);
 void FrameBuilderTask(void *param);
-void BoardDebugTest();
 void SetupWiFi();
 void SetupSNTP();
 void SetupTimers();
@@ -65,6 +64,7 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
 static void get_device_service_name(char *service_name, size_t max);
 void Setup60KHzOutput();
 void SNTP_callback (struct timeval *tv);
+void HealthCheck_ISR();
 
 // WWVB related
 const char *ntpServer = "pool.ntp.org";
@@ -78,12 +78,41 @@ TaskHandle_t frameBuilderTaskHandle = NULL;
 
 // WiFi Provisioning
 bool is_provisioned = false;
-bool timer_Enabled = false;
 bool provisioning_in_progress = false;
 int s_retry_num = 0;
 EventGroupHandle_t s_wifi_event_group;
 const int WIFI_CONNECTED_BIT = BIT0;
 const int WIFI_FAIL_BIT = BIT1;
+
+// Error recovery types
+typedef enum
+{
+    WIFI_STATE_DISCONNECTED = 0,
+    WIFI_STATE_CONNECTING,
+    WIFI_STATE_CONNECTED
+} wifi_state_t;
+
+typedef struct
+{
+    uint64_t uptime_sec;
+    uint32_t frames_generated;
+    uint32_t frames_swapped;
+    uint32_t wifi_disconnects;
+    uint32_t wifi_reconnects;
+    uint32_t sntp_syncs;
+    int64_t last_sync_time_ms;
+    int64_t last_frame_generated_ms;
+    int64_t last_frame_swapped_ms;
+    int64_t last_second_tick_us;
+    int64_t last_second_period_us;
+    int64_t max_second_jitter_us;
+    int64_t last_minute_period_us;
+    int64_t max_minute_drift_us;
+} runtime_metrics_t;
+
+// WiFi state machine
+static wifi_state_t wifi_state = WIFI_STATE_DISCONNECTED;
+static runtime_metrics_t runtime_metrics = {0};
 
 // // Bit & Marker timers
 esp_timer_handle_t TimerBit0 = NULL;
@@ -161,7 +190,6 @@ void app_main(void)
 
 void SetupSNTP()
 {
-    timer_Enabled = false;
     ESP_ERROR_CHECK(esp_timer_start_periodic(TimerSyncWait, 62500)); // 8 Hz blink while waiting for sync (toggle every 62.5 ms)
 
     esp_sntp_config_t sntp_config = ESP_NETIF_SNTP_DEFAULT_CONFIG(ntpServer);
@@ -184,15 +212,19 @@ void SNTP_callback (struct timeval *tv)
 {
     ESP_LOGI("SNTP", "SNTP Syncronized");
 
+    runtime_metrics.sntp_syncs++;
+    runtime_metrics.last_sync_time_ms = esp_timer_get_time() / 1000;
+
     // Build initial synchronized frames before enabling transmission.
     SetupWWVBArray(activeWWVBBuffer);
     SetupWWVBArray(stagingWWVBBuffer);
+    runtime_metrics.frames_generated += 2;
+    runtime_metrics.last_frame_generated_ms = esp_timer_get_time() / 1000;
     stagingFrameReady = true;
 
     // Start first transmission on the next UTC minute boundary.
     slot = 0;
 
-    timer_Enabled = true;
     if (esp_timer_is_active(TimerSyncWait))
         ESP_ERROR_CHECK(esp_timer_stop(TimerSyncWait));
     ESP_ERROR_CHECK(gpio_set_level(GPIO_NUM_13, 0));
@@ -322,11 +354,14 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
         /* Only attempt to connect if provisioning is complete */
         if (!provisioning_in_progress)
         {
+            wifi_state = WIFI_STATE_CONNECTING;
             ESP_ERROR_CHECK(esp_wifi_connect());
         }
     } 
     else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) 
     {
+        wifi_state = WIFI_STATE_DISCONNECTED;
+        runtime_metrics.wifi_disconnects++;
         if (s_retry_num < 10) 
         {
             ESP_ERROR_CHECK(esp_wifi_connect());
@@ -343,8 +378,13 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
     {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
         ESP_LOGI("WiFi", "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
+        if (wifi_state != WIFI_STATE_CONNECTED)
+        {
+            runtime_metrics.wifi_reconnects++;
+        }
         s_retry_num = 0;
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+        wifi_state = WIFI_STATE_CONNECTED;
     } 
     else if (event_base == WIFI_PROV_EVENT) 
     {
@@ -503,10 +543,36 @@ void TimerSecond_ISR(void *param)
 {
     (void)param;
   static bool ON;
+  static int64_t last_minute_boundary_us = 0;
+  int64_t now_us = esp_timer_get_time();
   ON = !ON;
+
+    if (runtime_metrics.last_second_tick_us != 0)
+    {
+        int64_t second_period_us = now_us - runtime_metrics.last_second_tick_us;
+        int64_t second_jitter_us = second_period_us - 1000000;
+        int64_t abs_second_jitter_us = (second_jitter_us < 0) ? -second_jitter_us : second_jitter_us;
+
+        runtime_metrics.last_second_period_us = second_period_us;
+        if (abs_second_jitter_us > runtime_metrics.max_second_jitter_us)
+            runtime_metrics.max_second_jitter_us = abs_second_jitter_us;
+    }
+    runtime_metrics.last_second_tick_us = now_us;
 
     if (slot == 0)
     {
+        if (last_minute_boundary_us != 0)
+        {
+            int64_t minute_period_us = now_us - last_minute_boundary_us;
+            int64_t minute_drift_us = minute_period_us - 60000000;
+            int64_t abs_minute_drift_us = (minute_drift_us < 0) ? -minute_drift_us : minute_drift_us;
+
+            runtime_metrics.last_minute_period_us = minute_period_us;
+            if (abs_minute_drift_us > runtime_metrics.max_minute_drift_us)
+                runtime_metrics.max_minute_drift_us = abs_minute_drift_us;
+        }
+        last_minute_boundary_us = now_us;
+
             // Only touch transmit buffer pointers at the minute boundary.
             if (stagingFrameReady)
             {
@@ -514,6 +580,8 @@ void TimerSecond_ISR(void *param)
                     activeWWVBBuffer = stagingWWVBBuffer;
                     stagingWWVBBuffer = previousActive;
                     stagingFrameReady = false;
+                    runtime_metrics.frames_swapped++;
+            runtime_metrics.last_frame_swapped_ms = now_us / 1000;
             }
 
             if (frameBuilderTaskHandle != NULL)
@@ -574,6 +642,8 @@ void TimerSecond_ISR(void *param)
       printf("\n");
       LogCurrentTime();
       #endif
+
+      HealthCheck_ISR();
   }
 }
 
@@ -585,8 +655,33 @@ void FrameBuilderTask(void *param)
     {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         SetupWWVBArray(stagingWWVBBuffer);
+        runtime_metrics.frames_generated++;
+        runtime_metrics.last_frame_generated_ms = esp_timer_get_time() / 1000;
         stagingFrameReady = true;
     }
+}
+
+void HealthCheck_ISR()
+{
+    int64_t now_ms = esp_timer_get_time() / 1000;
+    int64_t gen_age_ms = (runtime_metrics.last_frame_generated_ms > 0) ? (now_ms - runtime_metrics.last_frame_generated_ms) : -1;
+    int64_t swap_age_ms = (runtime_metrics.last_frame_swapped_ms > 0) ? (now_ms - runtime_metrics.last_frame_swapped_ms) : -1;
+
+    runtime_metrics.uptime_sec = esp_timer_get_time() / 1000000;
+    ESP_LOGI("HEALTH", "Up:%llu sec|Frm:gen=%lu sw=%lu genAge=%lldms swAge=%lldms|Tick:last=%lldus maxJit=%lldus|Min:last=%lldus maxDrift=%lldus|WiFi:dis=%lu con=%lu st=%d|SNTP:syn=%lu",
+             runtime_metrics.uptime_sec,
+             runtime_metrics.frames_generated,
+             runtime_metrics.frames_swapped,
+             gen_age_ms,
+             swap_age_ms,
+             runtime_metrics.last_second_period_us,
+             runtime_metrics.max_second_jitter_us,
+             runtime_metrics.last_minute_period_us,
+             runtime_metrics.max_minute_drift_us,
+             runtime_metrics.wifi_disconnects,
+             runtime_metrics.wifi_reconnects,
+             wifi_state,
+             runtime_metrics.sntp_syncs);
 }
 
 void ZeroCarrier()
