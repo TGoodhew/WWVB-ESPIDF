@@ -176,3 +176,47 @@ TEST_CASE("isDaylightSavingTime honors 2025 transition boundaries", "[wwvb]")
     TEST_ASSERT_TRUE(isDaylightSavingTime(2025, 305));
     TEST_ASSERT_FALSE(isDaylightSavingTime(2025, 306));
 }
+
+TEST_CASE("encodeMinute only updates minute bit slots", "[wwvb]")
+{
+    uint8_t signal[60];
+    memset(signal, 0xAA, sizeof(signal));
+
+    encodeMinute(42, signal);
+
+    for (int i = 0; i < 60; i++)
+    {
+        bool is_minute_slot = (i == 1 || i == 2 || i == 3 || i == 5 || i == 6 || i == 7 || i == 8);
+        if (is_minute_slot)
+        {
+            TEST_ASSERT_TRUE(signal[i] == 0 || signal[i] == 1);
+        }
+        else
+        {
+            TEST_ASSERT_EQUAL_HEX8(0xAA, signal[i]);
+        }
+    }
+}
+
+TEST_CASE("setMarkersAndIndicators leaves non-marker fields untouched", "[wwvb]")
+{
+    uint8_t signal[60];
+    memset(signal, 0xAA, sizeof(signal));
+
+    setMarkersAndIndicators(signal);
+
+    for (int i = 0; i < 60; i++)
+    {
+        bool is_marker_or_reserved = (i == 0 || i == 4 || i == 9 || i == 10 || i == 11 || i == 14 || i == 19 ||
+                                      i == 20 || i == 21 || i == 24 || i == 29 || i == 34 || i == 35 || i == 39 ||
+                                      i == 44 || i == 49 || i == 54 || i == 59);
+        if (is_marker_or_reserved)
+        {
+            TEST_ASSERT_TRUE(signal[i] == 0 || signal[i] == 2);
+        }
+        else
+        {
+            TEST_ASSERT_EQUAL_HEX8(0xAA, signal[i]);
+        }
+    }
+}
