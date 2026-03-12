@@ -23,6 +23,7 @@ void setDUT1(uint8_t *signal);
 void setLeapYear(uint16_t year, uint8_t *signal);
 void setLeapSecond(bool IsLeap, uint8_t *signal);
 void setDST(bool IsDST, uint8_t *signal);
+void calculateDSTDays(int year, int *startDay, int *endDay);
 bool isDaylightSavingTime(int year, int daysPassed);
 
 TEST_CASE("BitsEncoder encodes BCD values", "[wwvb]")
@@ -159,4 +160,19 @@ TEST_CASE("isDaylightSavingTime returns expected seasonal values", "[wwvb]")
     TEST_ASSERT_FALSE(isDaylightSavingTime(2025, 15));
     TEST_ASSERT_TRUE(isDaylightSavingTime(2025, 196));
     TEST_ASSERT_FALSE(isDaylightSavingTime(2025, 349));
+}
+
+TEST_CASE("isDaylightSavingTime honors 2025 transition boundaries", "[wwvb]")
+{
+    int startDay = 0;
+    int endDay = 0;
+
+    calculateDSTDays(2025, &startDay, &endDay);
+    TEST_ASSERT_EQUAL_INT(68, startDay);   // 2025-03-09
+    TEST_ASSERT_EQUAL_INT(306, endDay);    // 2025-11-02
+
+    TEST_ASSERT_FALSE(isDaylightSavingTime(2025, 67));
+    TEST_ASSERT_TRUE(isDaylightSavingTime(2025, 68));
+    TEST_ASSERT_TRUE(isDaylightSavingTime(2025, 305));
+    TEST_ASSERT_FALSE(isDaylightSavingTime(2025, 306));
 }

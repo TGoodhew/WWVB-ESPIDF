@@ -329,8 +329,20 @@ void LogCurrentTime()
     char strftime_buf[64];
     strftime(strftime_buf, sizeof(strftime_buf), "%c", utcTime);
 
+    int year = utcTime->tm_year + 1900;
+    int dayOfYear = utcTime->tm_yday + 1;
+    int dstStartDay = 0;
+    int dstEndDay = 0;
+    bool isDst = isDaylightSavingTime(year, dayOfYear);
+    calculateDSTDays(year, &dstStartDay, &dstEndDay);
+
     // Write the system time as a log entry
-    ESP_LOGI("Time", "Current system time: %s", strftime_buf);
+    ESP_LOGI("Time", "Current system time: %s (UTC day %d, DST: %s, start day: %d, end day: %d)",
+             strftime_buf,
+             dayOfYear,
+             isDst ? "ON" : "OFF",
+             dstStartDay,
+             dstEndDay);
 }
 
 void SetupWWVBArray()
@@ -657,15 +669,26 @@ bool isLeapYear(int year)
 // Function to calculate the start and end days for DST in a given year
 void calculateDSTDays(int year, int *startDay, int *endDay)
 {
-    bool leap = isLeapYear(year);
+    struct tm date = {0};
+
     // Calculate the second Sunday in March
-    int daysInFeb = leap ? 29 : 28;
-    int daysUntilMarch = 31 + daysInFeb;
-    *startDay = daysUntilMarch + (14 - ((year + year / 4 - year / 100 + year / 400 + daysUntilMarch) % 7));
+    date.tm_year = year - 1900;
+    date.tm_mon = 2;   // March (0-based)
+    date.tm_mday = 1;  // March 1st
+    mktime(&date);
+    int firstSundayMarch = (date.tm_wday == 0) ? 1 : (8 - date.tm_wday);
+    date.tm_mday = firstSundayMarch + 7; // Second Sunday
+    mktime(&date);
+    *startDay = date.tm_yday + 1; // 1-based day-of-year
 
     // Calculate the first Sunday in November
-    int daysUntilNov = 31 + daysInFeb + 31 + 30 + 31 + 30 + 31 + 31 + 30;
-    *endDay = daysUntilNov + (7 - ((year + year / 4 - year / 100 + year / 400 + daysUntilNov) % 7));
+    date.tm_mon = 10;  // November (0-based)
+    date.tm_mday = 1;  // November 1st
+    mktime(&date);
+    int firstSundayNovember = (date.tm_wday == 0) ? 1 : (8 - date.tm_wday);
+    date.tm_mday = firstSundayNovember;
+    mktime(&date);
+    *endDay = date.tm_yday + 1; // 1-based day-of-year
 }
 
 // Function to check if the current day is within DST period
