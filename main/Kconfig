@@ -1,0 +1,14 @@
+menu "WWVB Emulator Configuration"
+
+    config WWVB_WIFI_POP
+        string "WiFi Provisioning Proof-of-Possession"
+        default "abcd1234"
+        help
+            Proof-of-Possession (PoP) string for BLE WiFi provisioning.
+            Used during device provisioning to ensure authorized provisioners.
+            Must be > 0 characters for Security 1 provisioning.
+            
+            WARNING: This default should NOT be used in production releases.
+            Change to a secure, randomly-generated PoP before release builds.
+
+endmenu

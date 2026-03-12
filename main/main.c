@@ -33,30 +33,31 @@
 #include <esp_netif_sntp.h>
 #include <wifi_provisioning/manager.h>
 #include <wifi_provisioning/scheme_ble.h>
+#include "wwvb_codec.h"
 
 #define WWVBDEBUG
 
+// Compile-time validation: warn if using default PoP in non-debug builds
+#if !defined(WWVBDEBUG) && defined(CONFIG_WWVB_WIFI_POP)
+#if __cplusplus
+#warning "Using default PoP ('abcd1234') for production build. Change CONFIG_WWVB_WIFI_POP for security."
+#else
+#pragma message("WARNING: Using default PoP for production build. Set CONFIG_WWVB_WIFI_POP.")
+#endif
+#endif
+
 // Function Prototypes - I wanted to keep this as a single file if people wanted to grab it and drop it into their projects
-void encodeYear(uint16_t year, uint8_t *signal);
-void encodeDayOfYear(uint16_t dayOfYear, uint8_t *signal);
-void encodeHour(uint8_t hour, uint8_t *signal);
-void encodeMinute(uint8_t minute, uint8_t *signal);
-void setMarkersAndIndicators(uint8_t *signal);
-void setDUT1(uint8_t *signal);
-void setLeapYear(uint16_t year, uint8_t *signal);
-void setLeapSecond(bool IsLeap, uint8_t *signal);
-void setDST(bool IsDST, uint8_t *signal);
-uint16_t BitsEncoder(uint16_t n);
 void TimerSignalReenable_ISR();
 void ZeroCarrier();
 void TimerSecond_ISR();
+void TimerMinuteAlign_ISR(void *param);
 void TimerSyncWait_ISR(void *param);
+void FrameBuilderTask(void *param);
 void BoardDebugTest();
 void SetupWiFi();
 void SetupSNTP();
 void SetupTimers();
 void SetupWWVBArray(uint8_t *signal);
-bool isLeapYear(int year);
 void calculateDSTDays(int year, int *startDay, int *endDay);
 bool isDaylightSavingTime(int year, int daysPassed);
 void LogCurrentTime();
@@ -72,10 +73,13 @@ uint8_t WWVBBufferB[60] = {0};
 uint8_t *activeWWVBBuffer = WWVBBufferA;
 uint8_t *stagingWWVBBuffer = WWVBBufferB;
 volatile uint8_t slot = 0;
+volatile bool stagingFrameReady = false;
+TaskHandle_t frameBuilderTaskHandle = NULL;
 
 // WiFi Provisioning
 bool is_provisioned = false;
 bool timer_Enabled = false;
+bool provisioning_in_progress = false;
 int s_retry_num = 0;
 EventGroupHandle_t s_wifi_event_group;
 const int WIFI_CONNECTED_BIT = BIT0;
@@ -88,6 +92,7 @@ esp_timer_handle_t TimerBitMarker = NULL;
 
 // // One Second timer
 esp_timer_handle_t TimerSecond = NULL;
+esp_timer_handle_t TimerMinuteAlign = NULL;
 esp_timer_handle_t TimerSyncWait = NULL;
 
 // 60KHz output
@@ -119,10 +124,22 @@ void app_main(void)
 
     SetupWiFi();
 
-    ESP_LOGI("SNTP", "Initializing WWVBArray");
+    ESP_LOGI("WiFi", "Waiting for WiFi connection before SNTP initialization");
+    xEventGroupWaitBits(s_wifi_event_group,
+                        WIFI_CONNECTED_BIT,
+                        pdFALSE,
+                        pdFALSE,
+                        portMAX_DELAY);
 
-    SetupWWVBArray(activeWWVBBuffer);
-    SetupWWVBArray(stagingWWVBBuffer);
+    ESP_LOGI("SNTP", "WWVB buffers will be initialized after SNTP sync");
+
+    xTaskCreatePinnedToCore(FrameBuilderTask,
+                            "WWVBFrameBuilder",
+                            4096,
+                            NULL,
+                            5,
+                            &frameBuilderTaskHandle,
+                            tskNO_AFFINITY);
 
     ESP_LOGI("SNTP", "Initializing Timers");
 
@@ -145,7 +162,7 @@ void app_main(void)
 void SetupSNTP()
 {
     timer_Enabled = false;
-    ESP_ERROR_CHECK(esp_timer_start_periodic(TimerSyncWait, 250000)); // 4 Hz while waiting for sync
+    ESP_ERROR_CHECK(esp_timer_start_periodic(TimerSyncWait, 62500)); // 8 Hz blink while waiting for sync (toggle every 62.5 ms)
 
     esp_sntp_config_t sntp_config = ESP_NETIF_SNTP_DEFAULT_CONFIG(ntpServer);
     sntp_config.sync_cb = SNTP_callback;
@@ -167,6 +184,14 @@ void SNTP_callback (struct timeval *tv)
 {
     ESP_LOGI("SNTP", "SNTP Syncronized");
 
+    // Build initial synchronized frames before enabling transmission.
+    SetupWWVBArray(activeWWVBBuffer);
+    SetupWWVBArray(stagingWWVBBuffer);
+    stagingFrameReady = true;
+
+    // Start first transmission on the next UTC minute boundary.
+    slot = 0;
+
     timer_Enabled = true;
     if (esp_timer_is_active(TimerSyncWait))
         ESP_ERROR_CHECK(esp_timer_stop(TimerSyncWait));
@@ -175,8 +200,26 @@ void SNTP_callback (struct timeval *tv)
     ESP_ERROR_CHECK(ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, 127));
     ESP_ERROR_CHECK(ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel));
 
-    if (!esp_timer_is_active(TimerSecond))
-        ESP_ERROR_CHECK(esp_timer_start_periodic(TimerSecond, 1000000)); // 1 second
+    // Use callback timestamp to align first bit to exact minute boundary.
+    int64_t sec_in_minute = (int64_t)(tv->tv_sec % 60);
+    if (sec_in_minute < 0)
+        sec_in_minute += 60;
+
+    int64_t usec_past_minute = sec_in_minute * 1000000LL + (int64_t)tv->tv_usec;
+    int64_t usec_to_next_minute = (60000000LL - usec_past_minute) % 60000000LL;
+
+    if (usec_to_next_minute == 0)
+    {
+        if (!esp_timer_is_active(TimerSecond))
+            ESP_ERROR_CHECK(esp_timer_start_periodic(TimerSecond, 1000000)); // 1 second
+    }
+    else
+    {
+        int64_t wait_sec = usec_to_next_minute / 1000000LL;
+        int64_t wait_msec = (usec_to_next_minute % 1000000LL) / 1000LL;
+        ESP_LOGI("SNTP", "First WWVB frame starts at next minute boundary in %lld.%03lld s", wait_sec, wait_msec);
+        ESP_ERROR_CHECK(esp_timer_start_once(TimerMinuteAlign, usec_to_next_minute));
+    }
 }
 
 void SetupWiFi()
@@ -217,6 +260,7 @@ void SetupWiFi()
     if (!is_provisioned)
     {
         ESP_LOGI("WiFi", "Starting provisioning");
+        provisioning_in_progress = true;
 
         char service_name[12];
         get_device_service_name(service_name, sizeof(service_name));
@@ -225,7 +269,7 @@ void SetupWiFi()
          *      - this should be a string with length > 0
          *      - NULL if not used
          */
-        const char *pop = "abcd1234";
+        const char *pop = CONFIG_WWVB_WIFI_POP;
 
         /* This is the structure for passing security parameters
          * for the protocomm security 1.
@@ -268,8 +312,6 @@ void SetupWiFi()
         /* Start Wi-Fi station */
         ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
         ESP_ERROR_CHECK(esp_wifi_start());
-
-        ESP_LOGI("WiFi", "Connected");
     }
 }
 
@@ -277,7 +319,11 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
 {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) 
     {
-        ESP_ERROR_CHECK(esp_wifi_connect());
+        /* Only attempt to connect if provisioning is complete */
+        if (!provisioning_in_progress)
+        {
+            ESP_ERROR_CHECK(esp_wifi_connect());
+        }
     } 
     else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) 
     {
@@ -327,7 +373,11 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
                 break;
             case WIFI_PROV_END:
                 /* De-initialize manager once provisioning is finished */
+                provisioning_in_progress = false;
                 wifi_prov_mgr_deinit();
+                /* Now attempt to connect with the provisioned credentials */
+                ESP_LOGI("WiFi", "Provisioning complete, connecting to AP");
+                ESP_ERROR_CHECK(esp_wifi_connect());
                 break;
             default:
                 break;
@@ -366,21 +416,23 @@ void LogCurrentTime()
 void SetupWWVBArray(uint8_t *signal)
 {
     time_t rawtime;
-    struct tm *utcTime;
+    struct tm utcTime;
 
     time(&rawtime);
-    utcTime = gmtime(&rawtime);
+    // Frame builder runs one minute ahead so the swapped-in frame matches the next minute boundary.
+    rawtime += 60;
+    gmtime_r(&rawtime, &utcTime);
 
     // Build a complete one-minute frame for the given UTC minute.
-    encodeYear(utcTime->tm_year + 1900, signal);
-    encodeDayOfYear(utcTime->tm_yday + 1, signal);
-    encodeHour(utcTime->tm_hour, signal);
-    encodeMinute(utcTime->tm_min, signal);
+    encodeYear(utcTime.tm_year + 1900, signal);
+    encodeDayOfYear(utcTime.tm_yday + 1, signal);
+    encodeHour(utcTime.tm_hour, signal);
+    encodeMinute(utcTime.tm_min, signal);
     setMarkersAndIndicators(signal);
     setDUT1(signal); // We're ignoring DUT1 as it has been deprecated and not used in this scenario
-    setLeapYear(utcTime->tm_year + 1900, signal);
+    setLeapYear(utcTime.tm_year + 1900, signal);
     setLeapSecond(false, signal); // Ignore leap seconds in this scenario
-    setDST(isDaylightSavingTime(utcTime->tm_year + 1900, utcTime->tm_yday + 1), signal);
+    setDST(isDaylightSavingTime(utcTime.tm_year + 1900, utcTime.tm_yday + 1), signal);
 }
 
 void SetupTimers()
@@ -409,11 +461,26 @@ void SetupTimers()
         .name = "Bit Marker Timer"};
     ESP_ERROR_CHECK(esp_timer_create(&timer_bitmarker_config, &TimerBitMarker));
 
-    // Setup timer to blink red LED at 4 Hz while waiting for SNTP sync
+    // Setup timer to blink red LED at 8 Hz while waiting for SNTP sync
     const esp_timer_create_args_t timer_wait_sync_config = {
         .callback = &TimerSyncWait_ISR,
         .name = "Wait Sync Timer"};
     ESP_ERROR_CHECK(esp_timer_create(&timer_wait_sync_config, &TimerSyncWait));
+
+    // Setup one-shot timer to align first transmission to UTC minute boundary.
+    const esp_timer_create_args_t timer_minute_align_config = {
+        .callback = &TimerMinuteAlign_ISR,
+        .name = "Minute Align Timer"};
+    ESP_ERROR_CHECK(esp_timer_create(&timer_minute_align_config, &TimerMinuteAlign));
+}
+
+void TimerMinuteAlign_ISR(void *param)
+{
+    (void)param;
+    slot = 0;
+
+    if (!esp_timer_is_active(TimerSecond))
+        ESP_ERROR_CHECK(esp_timer_start_periodic(TimerSecond, 1000000)); // 1 second
 }
 
 void TimerSyncWait_ISR(void *param)
@@ -434,16 +501,23 @@ void IRAM_ATTR TimerSignalReenable_ISR()
 
 void TimerSecond_ISR(void *param)
 {
+    (void)param;
   static bool ON;
   ON = !ON;
 
     if (slot == 0)
     {
-            // Only touch encoded minute data at the boundary between minutes.
-            SetupWWVBArray(stagingWWVBBuffer);
-            uint8_t *previousActive = activeWWVBBuffer;
-            activeWWVBBuffer = stagingWWVBBuffer;
-            stagingWWVBBuffer = previousActive;
+            // Only touch transmit buffer pointers at the minute boundary.
+            if (stagingFrameReady)
+            {
+                    uint8_t *previousActive = activeWWVBBuffer;
+                    activeWWVBBuffer = stagingWWVBBuffer;
+                    stagingWWVBBuffer = previousActive;
+                    stagingFrameReady = false;
+            }
+
+            if (frameBuilderTaskHandle != NULL)
+                    xTaskNotifyGive(frameBuilderTaskHandle);
     }
   
   ESP_ERROR_CHECK(gpio_set_level(GPIO_NUM_13, ON));
@@ -503,165 +577,22 @@ void TimerSecond_ISR(void *param)
   }
 }
 
+void FrameBuilderTask(void *param)
+{
+    (void)param;
+
+    while (1)
+    {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        SetupWWVBArray(stagingWWVBBuffer);
+        stagingFrameReady = true;
+    }
+}
+
 void ZeroCarrier()
 {
     ESP_ERROR_CHECK(ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, 0));
     ESP_ERROR_CHECK(ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel));
-}
-
-// This rotuine takes the input value and then breaks it out in the individual BCD pattern that the WWVB format expects
-uint16_t BitsEncoder(uint16_t n)
-{
-    uint16_t result = 0;
-
-    const uint8_t div1 = n / 100;
-    const uint8_t div2 = (n - (div1 * 100)) / 10;
-    const uint8_t mod = n % 10;
-
-    result = (div1 & 0xF) << 8;
-    result |= (div2 & 0xF) << 4;
-    result |= (mod & 0xF);
-
-    return result;
-}
-
-// WWVB Expects year to be in 8 bit BCD - https://en.wikipedia.org/wiki/WWVB#Amplitude-modulated_time_code
-void encodeYear(uint16_t year, uint8_t *signal)
-{
-    int yearBCD = year % 100;
-    uint16_t bitsResult = BitsEncoder(yearBCD);
-
-    signal[45] = (bitsResult & 0x80) >> 7;
-    signal[46] = (bitsResult & 0x40) >> 6;
-    signal[47] = (bitsResult & 0x20) >> 5;
-    signal[48] = (bitsResult & 0x10) >> 4;
-    signal[50] = (bitsResult & 0x08) >> 3;
-    signal[51] = (bitsResult & 0x04) >> 2;
-    signal[52] = (bitsResult & 0x02) >> 1;
-    signal[53] = (bitsResult & 0x01);
-}
-
-// WWVB Expects the day of the year to be in 10 bit BCD - https://en.wikipedia.org/wiki/WWVB#Amplitude-modulated_time_code
-void encodeDayOfYear(uint16_t dayOfYear, uint8_t *signal)
-{
-    uint16_t bitsResult = BitsEncoder(dayOfYear);
-
-    signal[22] = (bitsResult & 0x0200) >> 9;
-    signal[23] = (bitsResult & 0x0100) >> 8;
-    signal[25] = (bitsResult & 0x0080) >> 7;
-    signal[26] = (bitsResult & 0x0040) >> 6;
-    signal[27] = (bitsResult & 0x0020) >> 5;
-    signal[28] = (bitsResult & 0x0010) >> 4;
-    signal[30] = (bitsResult & 0x0008) >> 3;
-    signal[31] = (bitsResult & 0x0004) >> 2;
-    signal[32] = (bitsResult & 0x0002) >> 1;
-    signal[33] = (bitsResult & 0x0001);
-}
-
-// WWVB Expects the hour to be in 6 bit BCD - https://en.wikipedia.org/wiki/WWVB#Amplitude-modulated_time_code
-void encodeHour(uint8_t hour, uint8_t *signal)
-{
-    uint16_t bitsResult = BitsEncoder(hour);
-
-    signal[12] = (bitsResult & 0x20) >> 5;
-    signal[13] = (bitsResult & 0x10) >> 4;
-    signal[15] = (bitsResult & 0x08) >> 3;
-    signal[16] = (bitsResult & 0x04) >> 2;
-    signal[17] = (bitsResult & 0x02) >> 1;
-    signal[18] = (bitsResult & 0x01);
-}
-
-// WWVB Expects minutes to be in 7 bit BCD - https://en.wikipedia.org/wiki/WWVB#Amplitude-modulated_time_code
-void encodeMinute(uint8_t minute, uint8_t *signal)
-{
-    uint16_t bitsResult = BitsEncoder(minute);
-
-    signal[1] = (bitsResult & 0x40) >> 6;
-    signal[2] = (bitsResult & 0x20) >> 5;
-    signal[3] = (bitsResult & 0x10) >> 4;
-    signal[5] = (bitsResult & 0x08) >> 3;
-    signal[6] = (bitsResult & 0x04) >> 2;
-    signal[7] = (bitsResult & 0x02) >> 1;
-    signal[8] = (bitsResult & 0x01);
-}
-
-// The WWVB signal has certain marker and bits that are always set to either a marker bit or a zero
-void setMarkersAndIndicators(uint8_t *signal)
-{
-    signal[0] = 2;  // Position marker
-    signal[9] = 2;  // Position marker
-    signal[19] = 2; // Position marker
-    signal[29] = 2; // Position marker
-    signal[39] = 2; // Position marker
-    signal[49] = 2; // Position marker
-    signal[59] = 2; // Position marker
-
-    signal[4] = 0;  // Always 0
-    signal[10] = 0; // Always 0
-    signal[11] = 0; // Always 0
-    signal[14] = 0; // Always 0
-    signal[20] = 0; // Always 0
-    signal[21] = 0; // Always 0
-    signal[24] = 0; // Always 0
-    signal[34] = 0; // Always 0
-    signal[35] = 0; // Always 0
-    signal[44] = 0; // Always 0
-    signal[54] = 0; // Always 0
-}
-
-// WWVB once supported celestial navigation uses but as it was deprecated and this scenario doesn't need it then just set those bits to 0 - https://en.wikipedia.org/wiki/WWVB#Amplitude-modulated_time_code
-void setDUT1(uint8_t *signal)
-{
-    // DUT1 is obselete, it was used for celestial navigation
-    signal[36] = 0;
-    signal[37] = 0;
-    signal[38] = 0;
-    signal[40] = 0;
-    signal[41] = 0;
-    signal[42] = 0;
-    signal[43] = 0;
-}
-
-// If you use the current year and mktime to set a date it will tell you if it is a leap year or not
-// I can't find where I got this code from so apologies for not crediting it to the appropriate person
-void setLeapYear(uint16_t year, uint8_t *signal)
-{
-    struct tm time_in = {0};
-    time_in.tm_year = year - 1900;
-    time_in.tm_mon = 2;  // March (0-based: January is 0)
-    time_in.tm_mday = 0; // Zero day of March will roll back to the last day of February
-
-    mktime(&time_in);
-
-    // If mktime leaves the day as 29 then it is a leap year
-    if (time_in.tm_mday == 29)
-        signal[55] = 1;
-    else
-        signal[55] = 0;
-}
-
-// WWVB Expects this bit for a leap second, I don't believe it is useful in this scenario but setting it just in case - https://en.wikipedia.org/wiki/WWVB#Amplitude-modulated_time_code
-void setLeapSecond(bool IsLeap, uint8_t *signal)
-{
-    if (IsLeap)
-        signal[56] = 1;
-    else
-        signal[56] = 0;
-}
-
-// WWVB Expects to have a DST bit set - It allows for warning of DST but we're ignoring that in this scenario - https://en.wikipedia.org/wiki/WWVB#Amplitude-modulated_time_code
-void setDST(bool IsDST, uint8_t *signal)
-{
-    if (IsDST)
-    {
-        signal[57] = 1;
-        signal[58] = 1;
-    }
-    else
-    {
-        signal[57] = 0;
-        signal[58] = 0;
-    }
 }
 
 void Setup60KHzOutput()
@@ -696,16 +627,6 @@ static void get_device_service_name(char *service_name, size_t max)
 // The following is AI generated code
 // This should be checked to see if it is actually works as expected
 // I just needed something quick to fill this DST calc
-
-// Function to determine if a year is a leap year
-bool isLeapYear(int year)
-{
-    if (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0))
-    {
-        return true;
-    }
-    return false;
-}
 
 // Function to calculate the start and end days for DST in a given year
 void calculateDSTDays(int year, int *startDay, int *endDay)
