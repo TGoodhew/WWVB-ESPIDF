@@ -50,11 +50,12 @@ uint16_t BitsEncoder(uint16_t n);
 void TimerSignalReenable_ISR();
 void ZeroCarrier();
 void TimerSecond_ISR();
+void TimerSyncWait_ISR(void *param);
 void BoardDebugTest();
 void SetupWiFi();
 void SetupSNTP();
 void SetupTimers();
-void SetupWWVBArray();
+void SetupWWVBArray(uint8_t *signal);
 bool isLeapYear(int year);
 void calculateDSTDays(int year, int *startDay, int *endDay);
 bool isDaylightSavingTime(int year, int daysPassed);
@@ -66,7 +67,10 @@ void SNTP_callback (struct timeval *tv);
 
 // WWVB related
 const char *ntpServer = "pool.ntp.org";
-uint8_t WWVBArray[60] = {0};
+uint8_t WWVBBufferA[60] = {0};
+uint8_t WWVBBufferB[60] = {0};
+uint8_t *activeWWVBBuffer = WWVBBufferA;
+uint8_t *stagingWWVBBuffer = WWVBBufferB;
 volatile uint8_t slot = 0;
 
 // WiFi Provisioning
@@ -84,6 +88,7 @@ esp_timer_handle_t TimerBitMarker = NULL;
 
 // // One Second timer
 esp_timer_handle_t TimerSecond = NULL;
+esp_timer_handle_t TimerSyncWait = NULL;
 
 // 60KHz output
 ledc_channel_config_t ledc_channel;
@@ -114,13 +119,10 @@ void app_main(void)
 
     SetupWiFi();
 
-    ESP_LOGI("SNTP", "Initializing SNTP");
-
-    SetupSNTP();
-
     ESP_LOGI("SNTP", "Initializing WWVBArray");
 
-    SetupWWVBArray();
+    SetupWWVBArray(activeWWVBBuffer);
+    SetupWWVBArray(stagingWWVBBuffer);
 
     ESP_LOGI("SNTP", "Initializing Timers");
 
@@ -130,15 +132,21 @@ void app_main(void)
 
     Setup60KHzOutput();
 
+    ESP_LOGI("SNTP", "Initializing SNTP");
+
+    SetupSNTP();
+
     while (1)
     {
-        SetupWWVBArray();
-        vTaskDelay(500 / portTICK_PERIOD_MS);
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 }
 
 void SetupSNTP()
 {
+    timer_Enabled = false;
+    ESP_ERROR_CHECK(esp_timer_start_periodic(TimerSyncWait, 250000)); // 4 Hz while waiting for sync
+
     esp_sntp_config_t sntp_config = ESP_NETIF_SNTP_DEFAULT_CONFIG(ntpServer);
     sntp_config.sync_cb = SNTP_callback;
 
@@ -158,7 +166,17 @@ void SetupSNTP()
 void SNTP_callback (struct timeval *tv)
 {
     ESP_LOGI("SNTP", "SNTP Syncronized");
-    ESP_ERROR_CHECK(esp_timer_start_periodic(TimerSecond, 1000000)); // 1 second
+
+    timer_Enabled = true;
+    if (esp_timer_is_active(TimerSyncWait))
+        ESP_ERROR_CHECK(esp_timer_stop(TimerSyncWait));
+    ESP_ERROR_CHECK(gpio_set_level(GPIO_NUM_13, 0));
+
+    ESP_ERROR_CHECK(ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, 127));
+    ESP_ERROR_CHECK(ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel));
+
+    if (!esp_timer_is_active(TimerSecond))
+        ESP_ERROR_CHECK(esp_timer_start_periodic(TimerSecond, 1000000)); // 1 second
 }
 
 void SetupWiFi()
@@ -345,7 +363,7 @@ void LogCurrentTime()
              dstEndDay);
 }
 
-void SetupWWVBArray()
+void SetupWWVBArray(uint8_t *signal)
 {
     time_t rawtime;
     struct tm *utcTime;
@@ -353,16 +371,16 @@ void SetupWWVBArray()
     time(&rawtime);
     utcTime = gmtime(&rawtime);
 
-    // Using the current UTC time fill in the WWVBArray
-    encodeYear(utcTime->tm_year + 1900, WWVBArray);
-    encodeDayOfYear(utcTime->tm_yday + 1, WWVBArray);
-    encodeHour(utcTime->tm_hour, WWVBArray);
-    encodeMinute(utcTime->tm_min, WWVBArray);
-    setMarkersAndIndicators(WWVBArray);
-    setDUT1(WWVBArray); // We're ignoring DUT1 as it has been deprecated and not used in this scenario
-    setLeapYear(utcTime->tm_year + 1900, WWVBArray);
-    setLeapSecond(false, WWVBArray); // Ignore leap seconds in this scenario
-    setDST(isDaylightSavingTime(utcTime->tm_year + 1900, utcTime->tm_yday + 1), WWVBArray);
+    // Build a complete one-minute frame for the given UTC minute.
+    encodeYear(utcTime->tm_year + 1900, signal);
+    encodeDayOfYear(utcTime->tm_yday + 1, signal);
+    encodeHour(utcTime->tm_hour, signal);
+    encodeMinute(utcTime->tm_min, signal);
+    setMarkersAndIndicators(signal);
+    setDUT1(signal); // We're ignoring DUT1 as it has been deprecated and not used in this scenario
+    setLeapYear(utcTime->tm_year + 1900, signal);
+    setLeapSecond(false, signal); // Ignore leap seconds in this scenario
+    setDST(isDaylightSavingTime(utcTime->tm_year + 1900, utcTime->tm_yday + 1), signal);
 }
 
 void SetupTimers()
@@ -390,6 +408,20 @@ void SetupTimers()
         .callback = &TimerSignalReenable_ISR,
         .name = "Bit Marker Timer"};
     ESP_ERROR_CHECK(esp_timer_create(&timer_bitmarker_config, &TimerBitMarker));
+
+    // Setup timer to blink red LED at 4 Hz while waiting for SNTP sync
+    const esp_timer_create_args_t timer_wait_sync_config = {
+        .callback = &TimerSyncWait_ISR,
+        .name = "Wait Sync Timer"};
+    ESP_ERROR_CHECK(esp_timer_create(&timer_wait_sync_config, &TimerSyncWait));
+}
+
+void TimerSyncWait_ISR(void *param)
+{
+    (void)param;
+    static bool waiting_led_on;
+    waiting_led_on = !waiting_led_on;
+    ESP_ERROR_CHECK(gpio_set_level(GPIO_NUM_13, waiting_led_on));
 }
 
 // All the bit/marker timers just reenable the 50%^ duty cycle of the 60KHz signal
@@ -404,10 +436,19 @@ void TimerSecond_ISR(void *param)
 {
   static bool ON;
   ON = !ON;
+
+    if (slot == 0)
+    {
+            // Only touch encoded minute data at the boundary between minutes.
+            SetupWWVBArray(stagingWWVBBuffer);
+            uint8_t *previousActive = activeWWVBBuffer;
+            activeWWVBBuffer = stagingWWVBBuffer;
+            stagingWWVBBuffer = previousActive;
+    }
   
   ESP_ERROR_CHECK(gpio_set_level(GPIO_NUM_13, ON));
 
-  switch (WWVBArray[slot])
+    switch (activeWWVBBuffer[slot])
   {
   case 0:
   {
@@ -635,7 +676,7 @@ void Setup60KHzOutput()
     ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
 
     ledc_channel.channel = LEDC_CHANNEL_0;
-    ledc_channel.duty = 127;
+    ledc_channel.duty = 0; // Hold output low until SNTP synchronization
     ledc_channel.gpio_num = GPIO_NUM_26; // A0 on the Huzzah32
     ledc_channel.speed_mode = LEDC_HIGH_SPEED_MODE;
     ledc_channel.timer_sel = LEDC_TIMER_0;
