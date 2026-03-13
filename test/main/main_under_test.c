@@ -97,6 +97,9 @@ static void reset_test_fakes(void)
 	TimerSecond = (esp_timer_handle_t)0x13;
 	TimerMinuteAlign = (esp_timer_handle_t)0x14;
 	TimerSyncWait = (esp_timer_handle_t)0x15;
+#if CONFIG_WWVB_STATUS_HEARTBEAT_ENABLE
+	TimerHeartbeat = (esp_timer_handle_t)0x16;
+#endif
 
 	ledc_channel.speed_mode = LEDC_HIGH_SPEED_MODE;
 	ledc_channel.channel = LEDC_CHANNEL_0;

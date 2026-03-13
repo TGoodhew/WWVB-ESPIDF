@@ -52,6 +52,9 @@ void ZeroCarrier();
 void TimerSecond_ISR();
 void TimerMinuteAlign_ISR(void *param);
 void TimerSyncWait_ISR(void *param);
+#if CONFIG_WWVB_STATUS_HEARTBEAT_ENABLE
+void TimerHeartbeat_ISR(void *param);
+#endif
 void FrameBuilderTask(void *param);
 void SetupWiFi();
 void SetupSNTP();
@@ -67,7 +70,15 @@ void SNTP_callback (struct timeval *tv);
 void HealthCheck_ISR();
 
 // WWVB related
-const char *ntpServer = "pool.ntp.org";
+static const char *ntpServer = CONFIG_WWVB_NTP_SERVER;
+static const gpio_num_t status_led_gpio = (gpio_num_t)CONFIG_WWVB_STATUS_LED_GPIO;
+static const gpio_num_t wwvb_output_gpio = (gpio_num_t)CONFIG_WWVB_OUTPUT_GPIO;
+static const uint32_t wwvb_carrier_freq_hz = (uint32_t)CONFIG_WWVB_CARRIER_FREQ_HZ;
+static const int wifi_retry_limit = CONFIG_WWVB_WIFI_RETRY_LIMIT;
+static const uint64_t status_led_blink_period_us = 1000000ULL / (2ULL * (uint64_t)CONFIG_WWVB_STATUS_LED_BLINK_HZ);
+#if CONFIG_WWVB_STATUS_HEARTBEAT_ENABLE
+static const uint64_t status_heartbeat_period_us = 1000000ULL / (2ULL * (uint64_t)CONFIG_WWVB_STATUS_HEARTBEAT_HZ);
+#endif
 uint8_t WWVBBufferA[60] = {0};
 uint8_t WWVBBufferB[60] = {0};
 uint8_t *activeWWVBBuffer = WWVBBufferA;
@@ -123,6 +134,9 @@ esp_timer_handle_t TimerBitMarker = NULL;
 esp_timer_handle_t TimerSecond = NULL;
 esp_timer_handle_t TimerMinuteAlign = NULL;
 esp_timer_handle_t TimerSyncWait = NULL;
+#if CONFIG_WWVB_STATUS_HEARTBEAT_ENABLE
+esp_timer_handle_t TimerHeartbeat = NULL;
+#endif
 
 // 60KHz output
 ledc_channel_config_t ledc_channel;
@@ -133,8 +147,8 @@ void app_main(void)
 
     ESP_LOGI("GPIO", "Configuring GPIO");
 
-    gpio_reset_pin(GPIO_NUM_13);
-    gpio_set_direction(GPIO_NUM_13, GPIO_MODE_OUTPUT);
+    gpio_reset_pin(status_led_gpio);
+    gpio_set_direction(status_led_gpio, GPIO_MODE_OUTPUT);
 
     ESP_LOGI("NVS", "Initializing NVS partition");
 
@@ -190,7 +204,8 @@ void app_main(void)
 
 void SetupSNTP()
 {
-    ESP_ERROR_CHECK(esp_timer_start_periodic(TimerSyncWait, 62500)); // 8 Hz blink while waiting for sync (toggle every 62.5 ms)
+    // Toggle every half-cycle to achieve configured full-cycle blink rate.
+    ESP_ERROR_CHECK(esp_timer_start_periodic(TimerSyncWait, status_led_blink_period_us));
 
     esp_sntp_config_t sntp_config = ESP_NETIF_SNTP_DEFAULT_CONFIG(ntpServer);
     sntp_config.sync_cb = SNTP_callback;
@@ -227,7 +242,11 @@ void SNTP_callback (struct timeval *tv)
 
     if (esp_timer_is_active(TimerSyncWait))
         ESP_ERROR_CHECK(esp_timer_stop(TimerSyncWait));
-    ESP_ERROR_CHECK(gpio_set_level(GPIO_NUM_13, 0));
+    ESP_ERROR_CHECK(gpio_set_level(status_led_gpio, 0));
+
+#if CONFIG_WWVB_STATUS_HEARTBEAT_ENABLE
+    ESP_ERROR_CHECK(esp_timer_start_periodic(TimerHeartbeat, status_heartbeat_period_us));
+#endif
 
     ESP_ERROR_CHECK(ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, 127));
     ESP_ERROR_CHECK(ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel));
@@ -362,11 +381,11 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
     {
         wifi_state = WIFI_STATE_DISCONNECTED;
         runtime_metrics.wifi_disconnects++;
-        if (s_retry_num < 10) 
+        if (s_retry_num < wifi_retry_limit) 
         {
             ESP_ERROR_CHECK(esp_wifi_connect());
             s_retry_num++;
-            ESP_LOGI("WiFi", "retry to connect to the AP");
+            ESP_LOGI("WiFi", "retry to connect to the AP (%d/%d)", s_retry_num, wifi_retry_limit);
         } 
         else 
         {
@@ -512,6 +531,14 @@ void SetupTimers()
         .callback = &TimerMinuteAlign_ISR,
         .name = "Minute Align Timer"};
     ESP_ERROR_CHECK(esp_timer_create(&timer_minute_align_config, &TimerMinuteAlign));
+
+#if CONFIG_WWVB_STATUS_HEARTBEAT_ENABLE
+    // Setup periodic heartbeat LED timer
+    const esp_timer_create_args_t timer_heartbeat_config = {
+        .callback = &TimerHeartbeat_ISR,
+        .name = "Heartbeat Timer"};
+    ESP_ERROR_CHECK(esp_timer_create(&timer_heartbeat_config, &TimerHeartbeat));
+#endif
 }
 
 void TimerMinuteAlign_ISR(void *param)
@@ -528,8 +555,18 @@ void TimerSyncWait_ISR(void *param)
     (void)param;
     static bool waiting_led_on;
     waiting_led_on = !waiting_led_on;
-    ESP_ERROR_CHECK(gpio_set_level(GPIO_NUM_13, waiting_led_on));
+    ESP_ERROR_CHECK(gpio_set_level(status_led_gpio, waiting_led_on));
 }
+
+#if CONFIG_WWVB_STATUS_HEARTBEAT_ENABLE
+void TimerHeartbeat_ISR(void *param)
+{
+    (void)param;
+    static bool heartbeat_on;
+    heartbeat_on = !heartbeat_on;
+    ESP_ERROR_CHECK(gpio_set_level(status_led_gpio, heartbeat_on));
+}
+#endif
 
 // All the bit/marker timers just reenable the 50%^ duty cycle of the 60KHz signal
 void IRAM_ATTR TimerSignalReenable_ISR()
@@ -542,10 +579,8 @@ void IRAM_ATTR TimerSignalReenable_ISR()
 void TimerSecond_ISR(void *param)
 {
     (void)param;
-  static bool ON;
   static int64_t last_minute_boundary_us = 0;
   int64_t now_us = esp_timer_get_time();
-  ON = !ON;
 
     if (runtime_metrics.last_second_tick_us != 0)
     {
@@ -588,8 +623,6 @@ void TimerSecond_ISR(void *param)
                     xTaskNotifyGive(frameBuilderTaskHandle);
     }
   
-  ESP_ERROR_CHECK(gpio_set_level(GPIO_NUM_13, ON));
-
     switch (activeWWVBBuffer[slot])
   {
   case 0:
@@ -694,7 +727,7 @@ void Setup60KHzOutput()
 {
     ledc_timer_config_t ledc_timer = {
         .duty_resolution = LEDC_TIMER_8_BIT, // resolution of PWM duty
-        .freq_hz = 60000,                     // frequency of PWM signal
+        .freq_hz = wwvb_carrier_freq_hz,      // frequency of PWM signal
         .speed_mode = LEDC_HIGH_SPEED_MODE,   // timer mode
         .timer_num = LEDC_TIMER_0             // timer index
     };
@@ -703,7 +736,7 @@ void Setup60KHzOutput()
 
     ledc_channel.channel = LEDC_CHANNEL_0;
     ledc_channel.duty = 0; // Hold output low until SNTP synchronization
-    ledc_channel.gpio_num = GPIO_NUM_26; // A0 on the Huzzah32
+    ledc_channel.gpio_num = wwvb_output_gpio;
     ledc_channel.speed_mode = LEDC_HIGH_SPEED_MODE;
     ledc_channel.timer_sel = LEDC_TIMER_0;
 
