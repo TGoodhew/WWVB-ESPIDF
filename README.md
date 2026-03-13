@@ -74,7 +74,7 @@ Default values from `main/Kconfig`:
 - Carrier frequency: `60000 Hz`
 - Wi-Fi retry limit: `10`
 
-The checked-in top-level `sdkconfig` currently sets:
+For example, you can override these defaults in your project's `sdkconfig` with:
 
 - `CONFIG_WWVB_STATUS_LED_BLINK_HZ=25`
 - `CONFIG_WWVB_STATUS_HEARTBEAT_HZ=10`
