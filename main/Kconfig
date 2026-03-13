@@ -11,4 +11,65 @@ menu "WWVB Emulator Configuration"
             WARNING: This default should NOT be used in production releases.
             Change to a secure, randomly-generated PoP before release builds.
 
+    config WWVB_NTP_SERVER
+        string "NTP server hostname"
+        default "pool.ntp.org"
+        help
+            Hostname used by SNTP to synchronize UTC system time.
+
+    config WWVB_OUTPUT_GPIO
+        int "WWVB carrier output GPIO"
+        range 0 48
+        default 26
+        help
+            GPIO used for the 60 kHz WWVB carrier output (LEDC PWM).
+
+    config WWVB_STATUS_LED_GPIO
+        int "Status LED GPIO"
+        range 0 48
+        default 13
+        help
+            GPIO used as the status/debug LED output.
+
+    config WWVB_STATUS_LED_BLINK_HZ
+        int "Status LED blink rate while waiting for SNTP sync (Hz)"
+        range 1 50
+        default 8
+        help
+            Blink rate for the status LED while waiting for SNTP synchronization.
+            This is the full on/off cycle rate in Hertz.
+
+    config WWVB_STATUS_HEARTBEAT_ENABLE
+        bool "Enable status LED heartbeat during runtime"
+        default y
+        help
+            When enabled, the status LED is toggled by the dedicated
+            TimerHeartbeat timer, which is started from SNTP_callback,
+            to provide a heartbeat indication during normal runtime.
+
+    config WWVB_STATUS_HEARTBEAT_HZ
+        int "Heartbeat LED blink rate during runtime (Hz)"
+        depends on WWVB_STATUS_HEARTBEAT_ENABLE
+        range 1 50
+        default 1
+        help
+            Blink rate for the status LED during normal runtime operation.
+            This is the full on/off cycle rate in Hertz, using the same
+            convention as WWVB_STATUS_LED_BLINK_HZ.
+
+    config WWVB_CARRIER_FREQ_HZ
+        int "WWVB carrier frequency (Hz)"
+        range 1000 1000000
+        default 60000
+        help
+            LEDC carrier frequency in Hz. WWVB nominal carrier is 60000 Hz.
+
+    config WWVB_WIFI_RETRY_LIMIT
+        int "WiFi reconnect retry limit"
+        range 0 100
+        default 10
+        help
+            Number of reconnect attempts after a WiFi disconnect before
+            setting WIFI_FAIL_BIT.
+
 endmenu

@@ -1,0 +1,15 @@
+{
+	"folders": [
+		{
+			"path": ".."
+		},
+		{
+			"path": "../test"
+		}
+	],
+	"settings": {
+		"files.associations": {
+			"esp_chip_info.h": "c"
+		}
+	}
+}
