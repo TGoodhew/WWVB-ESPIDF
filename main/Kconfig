@@ -43,8 +43,9 @@ menu "WWVB Emulator Configuration"
         bool "Enable status LED heartbeat during runtime"
         default y
         help
-            When enabled, the status LED toggles during normal runtime in
-            TimerSecond_ISR as a heartbeat indication.
+            When enabled, the status LED is toggled by the dedicated
+            TimerHeartbeat timer, which is started from SNTP_callback,
+            to provide a heartbeat indication during normal runtime.
 
     config WWVB_STATUS_HEARTBEAT_HZ
         int "Heartbeat LED blink rate during runtime (Hz)"
